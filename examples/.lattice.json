@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "scan": {
+    "include": ["**/*.md"],
+    "exclude": ["Archives/**"]
+  },
+  "headings": {
+    "todo": "To Do",
+    "waiting": "Waiting On"
+  },
+  "inbox": {
+    "path": "Inbox"
+  }
+}
