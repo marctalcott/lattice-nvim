@@ -1,4 +1,6 @@
 -- Pure Markdown parsing: lines in, tasks and task sections out.
+local keywords = require("lattice.keywords")
+
 local M = {}
 
 local DAYS = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
@@ -87,7 +89,19 @@ local function list_item(body)
   end
 end
 
-local function parse_item(content, kind)
+-- The keyword starting `text` and the rest, when `text` is "<KEYWORD> <title>"
+-- with a declared keyword (exact case) and a non-empty title.
+local function split_keyword(text, states)
+  local keyword, rest = text:match("^(%S+)[ \t]+(.-)[ \t]*$")
+  if keyword and states[keyword] and rest ~= "" then
+    return keyword, rest
+  end
+end
+
+-- Parses an item's text. `category` is "todo" (mine) or "waiting" (owed to
+-- me). Without a keyword the item is a task only when `plain` is set (a
+-- top-level bullet in a Waiting On section); then `[x]` marks it done.
+local function parse_item(content, category, states, plain)
   local text = vim.trim(content)
   local done = false
 
@@ -100,12 +114,16 @@ local function parse_item(content, kind)
     done = mark ~= " "
     text = rest
   end
-  if text == "" then
+
+  local state, title = split_keyword(text, states)
+  if state then
+    text, done = title, states[state] == "done"
+  elseif not plain or text == "" then
     return nil
   end
 
   local person
-  if kind == "waiting" then
+  if category == "waiting" then
     local name, description = text:match("^@(%S+)[ \t]*(.*)$")
     if name then
       person, text = name, description
@@ -114,7 +132,7 @@ local function parse_item(content, kind)
 
   local dates = {}
   local bad_dates = {}
-  for _, tag in ipairs(kind == "waiting" and { "due", "promised" } or { "due" }) do
+  for _, tag in ipairs(category == "waiting" and { "due", "promised" } or { "due" }) do
     for value in text:gmatch("%[" .. tag .. ":([^%]]*)%]") do
       if M.valid_date(value) then
         dates[tag] = dates[tag] or value
@@ -125,17 +143,33 @@ local function parse_item(content, kind)
     text = vim.trim((text:gsub("[ \t]*%[" .. tag .. ":[^%]]*%][ \t]*", " ")))
   end
 
-  local task = { section = kind, text = text, person = person, due = dates.due, done = done }
+  local task = { section = category, state = state, text = text, person = person, due = dates.due, done = done }
   task.promised = dates.promised
   return task, bad_dates
 end
 
 --- @param lines string[]
---- @param headings { todo: string, waiting: string }
---- @return { tasks: table[], sections: table[], date_errors: table[] }
-function M.parse(lines, headings)
-  local result = { tasks = {}, sections = {}, date_errors = {} }
-  local section -- the task section being read, if any
+--- @param cfg { headings: { waiting: string }, keywords: table }  see config.defaults()
+--- @return { tasks: table[], sections: table[], date_errors: table[], warnings: table[], keywords: table }
+---   `keywords` is the set in effect for this note: its front matter's, else cfg's.
+function M.parse(lines, cfg)
+  local result = { tasks = {}, sections = {}, date_errors = {}, warnings = {}, keywords = cfg.keywords }
+
+  local sequences, todo_line, front_end = keywords.front_matter(lines)
+  if sequences then
+    local own, err = keywords.build(sequences)
+    if own then
+      result.keywords = own
+    else
+      result.warnings[#result.warnings + 1] = {
+        line = todo_line,
+        message = ("front matter todo: %s; using the root keywords"):format(err),
+      }
+    end
+  end
+  local states = result.keywords.states
+
+  local section -- the Waiting On section being read, if any
   local fence -- the open code fence, if any
   local list_col -- content column of the current top-level item
   local prev_paragraph, prev_blank = false, true
@@ -153,13 +187,24 @@ function M.parse(lines, headings)
     section = nil
   end
 
+  local function add(task, bad_dates, i)
+    task.line = i
+    result.tasks[#result.tasks + 1] = task
+    if not task.done then
+      for _, bad in ipairs(bad_dates) do
+        bad.line = i
+        result.date_errors[#result.date_errors + 1] = bad
+      end
+    end
+  end
+
   for i, raw in ipairs(lines) do
     local line = raw:gsub("\r$", "")
     if i == 1 then
       line = line:gsub("^\239\187\191", "")
     end
     local indent, body = measure(line)
-    local blank = body == ""
+    local blank = body == "" or i <= front_end
     local paragraph = false
 
     if fence then
@@ -175,9 +220,13 @@ function M.parse(lines, headings)
       elseif heading then
         close_section(i - 1)
         list_col = nil
-        local kind = (heading == headings.todo and "todo") or (heading == headings.waiting and "waiting")
-        if kind then
-          section = { kind = kind, line = i, last = i }
+        -- "## NEXT Draft plan" is itself a task; it is always mine.
+        local task, bad_dates = parse_item(heading, "todo", states, false)
+        if task then
+          add(task, bad_dates, i)
+        end
+        if heading == cfg.headings.waiting then
+          section = { kind = "waiting", line = i, last = i }
           result.sections[#result.sections + 1] = section
         end
       elseif prev_paragraph and indent <= 3 and is_setext_underline(body) then
@@ -189,20 +238,20 @@ function M.parse(lines, headings)
         local marker, gap, content, bullet = list_item(body)
         if marker then
           local nested = list_col and indent >= list_col
+          local category = section and "waiting" or "todo"
           if not nested and (list_col or indent <= 3) then
             list_col = indent + #marker + (gap > 4 and 1 or gap)
-            if bullet and section then
-              local task, bad_dates = parse_item(content, section.kind)
+            if bullet then
+              local task, bad_dates = parse_item(content, category, states, section ~= nil)
               if task then
-                task.line = i
-                result.tasks[#result.tasks + 1] = task
-                if not task.done then
-                  for _, bad in ipairs(bad_dates) do
-                    bad.line = i
-                    result.date_errors[#result.date_errors + 1] = bad
-                  end
-                end
+                add(task, bad_dates, i)
               end
+            end
+          elseif nested and bullet then
+            -- Nested bullets count only when they carry a keyword.
+            local task, bad_dates = parse_item(content, category, states, false)
+            if task then
+              add(task, bad_dates, i)
             end
           end
         else

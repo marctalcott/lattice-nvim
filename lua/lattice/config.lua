@@ -1,4 +1,6 @@
 -- Plugin options and .lattice.json loading.
+local keywords = require("lattice.keywords")
+
 local M = {}
 
 M.filename = ".lattice.json"
@@ -24,7 +26,11 @@ function M.defaults()
   return {
     version = 1,
     scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
-    headings = { todo = "To Do", waiting = "Waiting On" },
+    -- Org-style keyword sequences for the whole notes root; a note's YAML
+    -- front matter `todo:` replaces them for that note.
+    todo = vim.deepcopy(keywords.DEFAULT),
+    keywords = assert(keywords.build(keywords.DEFAULT)),
+    headings = { waiting = "Waiting On" },
     inbox = { path = "Inbox" },
   }
 end
@@ -128,17 +134,31 @@ local function validate(raw)
     end
   end
 
-  for _, key in ipairs({ "todo", "waiting" }) do
-    if headings[key] ~= nil then
-      local value = headings[key]
-      if type(value) ~= "string" or vim.trim(value) == "" then
-        return nil, ("headings.%s must be a non-empty string"):format(key)
-      end
-      cfg.headings[key] = vim.trim(value)
+  if raw.todo ~= nil then
+    local valid = type(raw.todo) == "string" or (type(raw.todo) == "table" and vim.islist(raw.todo))
+    local built, err
+    if valid then
+      built, err = keywords.build(raw.todo)
+    else
+      err = "expected a sequence string or a list of them"
     end
+    if not built then
+      return nil, ("todo: %s"):format(err)
+    end
+    cfg.todo = type(raw.todo) == "string" and { raw.todo } or raw.todo
+    cfg.keywords = built
   end
-  if cfg.headings.todo == cfg.headings.waiting then
-    return nil, "headings.todo and headings.waiting must be different"
+
+  if headings.waiting ~= nil then
+    if type(headings.waiting) ~= "string" or vim.trim(headings.waiting) == "" then
+      return nil, "headings.waiting must be a non-empty string"
+    end
+    cfg.headings.waiting = vim.trim(headings.waiting)
+  end
+  -- Older configs named a To Do heading; tasks now use keywords instead.
+  local notice
+  if headings.todo ~= nil or headings.done ~= nil then
+    notice = 'headings.todo and headings.done are no longer used and were ignored; mark items with keywords such as "- TODO ..." and set sequences with "todo".'
   end
 
   local inbox_path = (raw.inbox or {}).path
@@ -155,7 +175,7 @@ local function validate(raw)
     end
     cfg.inbox.path = inbox_path
   end
-  return cfg
+  return cfg, nil, notice
 end
 
 --- Reads `<root>/.lattice.json`.
@@ -179,11 +199,11 @@ function M.load(root)
   if not ok then
     return nil, nil, ("Invalid JSON in %s: %s\nFix the file, then refresh."):format(path, tostring(raw))
   end
-  local cfg, err = validate(raw)
+  local cfg, err, notice = validate(raw)
   if not cfg then
     return nil, nil, ("Invalid config in %s: %s\nFix the file, then refresh."):format(path, err)
   end
-  return cfg
+  return cfg, notice
 end
 
 return M

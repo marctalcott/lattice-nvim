@@ -1,6 +1,7 @@
 -- Explicit, user-triggered edits to the current note. Nothing here saves to disk.
 local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
+local keywords = require("lattice.keywords")
 local parser = require("lattice.parser")
 
 local M = {}
@@ -23,17 +24,17 @@ local function current_markdown_buffer()
   return buf
 end
 
-local function load_headings()
+local function load_config()
   local root = config.options.root
   if not root then
-    return config.defaults().headings
+    return config.defaults()
   end
   local cfg, _, err = config.load(root)
   if not cfg then
     vim.notify("Lattice: " .. err, vim.log.levels.ERROR)
     return nil
   end
-  return cfg.headings
+  return cfg
 end
 
 --- Chooses among several sections of the same kind, relative to the 1-based
@@ -54,8 +55,8 @@ function M.pick_section(sections, cursor)
 end
 
 --- Sections of `kind` in the buffer, in file order.
-local function find_sections(lines, kind, headings)
-  local parsed = parser.parse(lines, headings)
+local function find_sections(lines, kind, cfg)
+  local parsed = parser.parse(lines, cfg)
   local found = {}
   for _, section in ipairs(parsed.sections) do
     if section.kind == kind then
@@ -68,9 +69,9 @@ end
 --- Adds `entry` at the end of the chosen section (after its last non-blank
 --- line). Returns the new 1-based line, or nil, changing nothing, when the
 --- section is missing.
-function M.insert(buf, kind, entry, headings, cursor)
+function M.insert(buf, kind, entry, cfg, cursor)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local sections = find_sections(lines, kind, headings)
+  local sections = find_sections(lines, kind, cfg)
   if #sections == 0 then
     return nil
   end
@@ -81,9 +82,9 @@ end
 
 --- Appends a new `## <heading>` section with `entry` at the end of the note.
 --- Returns the entry's 1-based line.
-function M.append_section(buf, kind, entry, headings)
+function M.append_section(buf, kind, entry, cfg)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local block = { "## " .. headings[kind], entry }
+  local block = { "## " .. cfg.headings[kind], entry }
   if #lines == 1 and lines[1] == "" then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, block)
     return 2
@@ -96,15 +97,15 @@ function M.append_section(buf, kind, entry, headings)
 end
 
 --- Warns when the entry at `line` is not read back as a task, which happens
---- when it lands inside a code fence that is never closed.
-function M.check_visible(buf, line, headings)
+--- when it lands inside a code block (for example one that is never closed).
+function M.check_visible(buf, line, cfg)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  for _, task in ipairs(parser.parse(lines, headings).tasks) do
+  for _, task in ipairs(parser.parse(lines, cfg).tasks) do
     if task.line == line then
       return true
     end
   end
-  warn(("line %d was added, but Lattice won't list it: it is inside a code fence (```) that is never closed. Close the fence to fix it."):format(line))
+  warn(("line %d was added, but Lattice won't list it: it is inside a code block (```). Move it out, or close the block if it is never closed."):format(line))
   return false
 end
 
@@ -116,25 +117,55 @@ local function confirm(question, on_yes)
   end)
 end
 
--- Inserts once all prompts are answered. The cursor line is captured when
--- the command starts, so the choice of section matches what the user saw.
-local function finish(buf, kind, entry, cursor)
+--- Adds "- <KEYWORD> <text>" on the line below `cursor`, using the note's
+--- first open keyword (from its front matter, else the root sequences). On
+--- a list item it matches that item's indent; inside front matter it goes
+--- just after it. Returns the new 1-based line, or nil and an error.
+function M.insert_todo(buf, text, cfg, cursor)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local keyword = parser.parse(lines, cfg).keywords.first_open
+  if not keyword then
+    return nil, "this note's keyword sequences have no open state (a word before |)"
+  end
+  local _, _, front_end = keywords.front_matter(lines)
+  cursor = math.max(cursor, front_end)
+  local indent = (lines[cursor] or ""):match("^([ \t]*)[-*+][ \t]") or ""
+  local entry = ("%s- %s %s"):format(indent, keyword, text)
+  if #lines == 1 and lines[1] == "" then
+    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { entry })
+    return 1
+  end
+  vim.api.nvim_buf_set_lines(buf, cursor, cursor, false, { entry })
+  return cursor + 1
+end
+
+local function usable(buf)
   if not vim.api.nvim_buf_is_valid(buf) or not vim.bo[buf].modifiable then
     warn("the note is no longer available; task not added")
+    return false
+  end
+  return true
+end
+
+-- Inserts a Waiting On item once all prompts are answered. The cursor line
+-- is captured when the command starts, so the choice of section matches
+-- what the user saw.
+local function finish_waiting(buf, entry, cursor)
+  if not usable(buf) then
     return
   end
-  local headings = load_headings()
-  if not headings then
+  local cfg = load_config()
+  if not cfg then
     return
   end
-  local line = M.insert(buf, kind, entry, headings, cursor)
+  local line = M.insert(buf, "waiting", entry, cfg, cursor)
   if line then
-    M.check_visible(buf, line, headings)
+    M.check_visible(buf, line, cfg)
     return
   end
-  confirm(('This note has no "%s" heading. Add one at the end?'):format(headings[kind]), function()
-    if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modifiable then
-      M.check_visible(buf, M.append_section(buf, kind, entry, headings), headings)
+  confirm(('This note has no "%s" heading. Add one at the end?'):format(cfg.headings.waiting), function()
+    if usable(buf) then
+      M.check_visible(buf, M.append_section(buf, "waiting", entry, cfg), cfg)
     end
   end)
 end
@@ -154,9 +185,19 @@ function M.add_todo()
     return
   end
   local cursor = vim.api.nvim_win_get_cursor(0)[1]
-  ask("To Do: ", function(text)
-    if text ~= "" then
-      finish(buf, "todo", "- [ ] " .. text, cursor)
+  ask("TODO: ", function(text)
+    if text == "" or not usable(buf) then
+      return
+    end
+    local cfg = load_config()
+    if not cfg then
+      return
+    end
+    local line, err = M.insert_todo(buf, text, cfg, cursor)
+    if line then
+      M.check_visible(buf, line, cfg)
+    else
+      warn(err .. "; task not added")
     end
   end)
 end
@@ -178,7 +219,7 @@ function M.add_waiting()
         return
       end
       local entry = person ~= "" and ("- [ ] @%s %s"):format(person, text) or ("- [ ] " .. text)
-      finish(buf, "waiting", entry, cursor)
+      finish_waiting(buf, entry, cursor)
     end)
   end)
 end

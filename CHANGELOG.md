@@ -2,7 +2,23 @@
 
 Lattice is not released yet. This log tracks the work toward Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md).
 
-## Unreleased — Milestone 1
+## Unreleased — Org-style TODO keywords
+
+### Changed (breaking)
+
+- Personal tasks are now items whose first word is an org-mode style keyword: `- TODO Send update`, `## NEXT Draft plan`. They can sit anywhere in a note, at any nesting depth. The `To Do` heading is no longer recognized, so existing `## To Do` bullets need a keyword (`- TODO ...`) to appear.
+- Keywords match exactly, as in org-mode (`TODO`, not `todo` or `To Do`).
+- `<leader>lt` / `:LatticeAddTodo` adds `- TODO <task>` below the cursor instead of under a heading, so there is no heading prompt.
+- `headings.todo` in `.lattice.json` is ignored, with a notice.
+
+### Added
+
+- Keyword sequences such as `TODO NEXT | DONE CANCELED`, following org's `#+TODO:` rules (`|` splits open and done states; fast-access suffixes are ignored).
+- Root sequences come from `todo` in `.lattice.json` (default `TODO | DONE`). Per-note sequences come from a YAML front matter `todo:` key, which replaces the root ones for that note. Invalid front matter is a jumpable warning, and the note falls back to the root sequences.
+- Dashboard rows show each item's state, and a **DONE** group lists done-state items, most recently modified note first.
+- `:LatticeHealth` lists the root sequences and front matter problems.
+
+## Milestone 1 (merged in #1)
 
 ### Added
 

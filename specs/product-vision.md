@@ -74,6 +74,8 @@ Beyond grouping by ownership, the product should help answer What requires follo
 
 Open design questions: Which statuses are worth adding? Should the dashboard explicitly provide a daily/weekly review experience? No decision yet.
 
+Decision (2026-11-02): Personal tasks use org-mode style TODO keywords on the item itself (`- TODO ...`, `## NEXT ...`), with sequences such as `TODO NEXT | DONE CANCELED` set for the notes root in `.lattice.json` and per note in YAML front matter. Matching is exact, like org. Done-state items appear in a DONE group. This replaces the `To Do` heading. See Amendment A in `LATTICE_SPEC.md`.
+
 Decision (2026-11-01): A Waiting On item may add `[promised:YYYY-MM-DD]` for the date the other person committed to. `[due:...]` stays the user's follow-up date and alone drives sorting and overdue marks. The dashboard stays read-only: items are closed by editing the note.
 
 ### 5.3 AI-assisted discovery with approval

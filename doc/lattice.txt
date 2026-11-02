@@ -15,8 +15,9 @@ CONTENTS                                                     *lattice-contents*
 ==============================================================================
 1. INTRODUCTION                                                 *lattice-intro*
 
-Lattice lists the open tasks in your Markdown notes: what you owe (under
-`To Do` headings) and what others owe you (under `Waiting On` headings). The
+Lattice lists the tasks in your Markdown notes: what you owe (items that
+start with an org-mode style keyword such as TODO) and what others owe you
+(bullets under `Waiting On` headings). The
 notes stay the only source of truth. Scanning is read-only, and nothing
 leaves your machine.
 
@@ -49,32 +50,53 @@ setup({opts})
 3. NOTE FORMAT                                                 *lattice-format*
 
 >markdown
-    ## To Do
-    - Prepare revised staffing plan
-    - [ ] Send project update [due:2026-11-05]
-    - [x] Review the completed migration
+    ---
+    todo: TODO NEXT | DONE CANCELED
+    ---
+    - TODO Prepare revised staffing plan
+    - NEXT Send project update [due:2026-11-05]
+    - DONE Review the completed migration
+
+    ## NEXT Draft the Q1 plan
 
     ## Waiting On
     - @Raju Provide deployment estimate [due:2026-11-06]
     - [ ] Follow up with vendor [promised:2026-11-04]
 <
-- Headings must be exactly `To Do` or `Waiting On` (case-sensitive) at any
-  level, `#` to `######`. A section ends at the next heading of any level.
-- Only top-level `-`, `*` or `+` items count. `- Task` and `- [ ] Task` are
-  open. `- [x]` and `- [X]` are complete and hidden.
-- Nested items and anything in fenced code blocks are ignored.
-- In `Waiting On`, a leading one-word `@Name` names the person. Without one,
-  the item shows as Unassigned.
-- `[due:YYYY-MM-DD]` is the due date (follow-up date for `Waiting On`).
-  `[promised:YYYY-MM-DD]` (Waiting On only) is shown but does not affect
-  sorting. Invalid dates are not corrected: the task is shown undated and
-  the dashboard's WARNINGS block lists it. <CR> there opens its line.
+                                                           *lattice-keywords*
+A bullet or heading whose first word is a declared keyword is a task,
+anywhere in the note and at any nesting depth. Keywords match exactly, as
+in org-mode: `todo`, `TODO:` and `TODOs` are not keywords.
 
-==============================================================================
+A sequence works like org's `#+TODO:`. Words before `|` are open states,
+words after it are done states. Without `|`, the last word is the done
+state. Suffixes such as `TODO(t)` are ignored.
+
+- Root sequences: `todo` in .lattice.json (default `TODO | DONE`).
+- Per-note sequences: a `todo:` key in YAML front matter, as a string or a
+  list. It replaces the root sequences for that note. If it is invalid,
+  the note uses the root sequences and WARNINGS lists the problem.
+
+                                                            *lattice-waiting*
+Under a `Waiting On` heading (exact, any level), top-level `-`, `*` and `+`
+bullets are items you're waiting on: plain and `[ ]` are open, and `[x]` is
+done and hidden. Keyword items there take their keyword's state. A leading
+one-word `@Name` names the person; without one, the item shows as
+Unassigned.
+
+`[due:YYYY-MM-DD]` is the due date (follow-up date for `Waiting On`).
+`[promised:YYYY-MM-DD]` (Waiting On only) is shown but does not affect
+sorting. Invalid dates are not corrected: the task is shown undated and
+the dashboard's WARNINGS block lists it. <CR> there opens its line.
+
+Code blocks, front matter lines, ordered items and prose are never tasks.
+
+=====
 4. DASHBOARD                                                *lattice-dashboard*
 
-Groups: MY TO DO, WAITING ON, OVERDUE (due before today, oldest first), and
-DUE SOON (today through 7 days ahead, soonest first). INBOX appears when the
+Groups: MY TO DO, WAITING ON, OVERDUE (due before today, oldest first),
+DUE SOON (today through 7 days ahead, soonest first), and DONE (done-state
+items, most recently modified note first). Rows show each item's state. INBOX appears when the
 inbox folder exists. Owner groups list dated tasks first, by date, then
 undated tasks by file and line.
 
@@ -89,18 +111,19 @@ Lattice reads saved files. Save a note, then refresh.
 ==============================================================================
 5. ADDING TASKS                                                *lattice-insert*
 
-|:LatticeAddTodo| asks for text and adds `- [ ] <text>` under `To Do` in the
-current Markdown buffer. |:LatticeAddWaiting| asks for an optional one-word
-name, then text, and adds `- [ ] @Name <text>` under `Waiting On`.
+|:LatticeAddTodo| asks for text and adds `- TODO <text>` on the line below
+the cursor, using the note's first open keyword (front matter, else root).
+On a list item it matches the item's indent. |:LatticeAddWaiting| asks for
+an optional one-word name, then text, and adds `- [ ] @Name <text>` under
+`Waiting On`:
 
-- The item goes after the section's last non-blank line.
+- The Waiting On item goes after the section's last non-blank line.
 - With several matching sections: the one containing the cursor, else the
   nearest one above the cursor, else the first.
-- With none: Lattice asks before adding the heading at the end of the note.
+- With none: Lattice asks before adding `## Waiting On` at the end.
 - Cancelling any prompt leaves the buffer unchanged. The buffer is never
   saved for you.
-- If the item lands inside a never-closed code fence, Lattice warns that it
-  can't list it.
+- If an item lands inside a code block, Lattice warns that it can't list it.
 
 ==============================================================================
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
@@ -110,7 +133,7 @@ name, then text, and adds `- [ ] @Name <text>` under `Waiting On`.
                                                              *:LatticeRefresh*
 :LatticeRefresh     Rescan notes and .lattice.json.       (<leader>lr)
                                                              *:LatticeAddTodo*
-:LatticeAddTodo     Add a To Do item to the current note. (<leader>lt)
+:LatticeAddTodo     Add a TODO item below the cursor.     (<leader>lt)
                                                           *:LatticeAddWaiting*
 :LatticeAddWaiting  Add a Waiting On item.                (<leader>ld)
                                                               *:LatticeHealth*
@@ -127,11 +150,12 @@ reported and ignored.
 Optional `.lattice.json` in the notes root: >json
     {
       "version": 1,
+      "todo": ["TODO NEXT | DONE CANCELED"],
       "scan": {
         "include": ["**/*.md"],
         "exclude": ["Archives/**", ".git/**"]
       },
-      "headings": { "todo": "To Do", "waiting": "Waiting On" },
+      "headings": { "waiting": "Waiting On" },
       "inbox": { "path": "Inbox" }
     }
 <
@@ -145,7 +169,8 @@ error and scans nothing.
 8. LIMITATIONS AND TROUBLESHOOTING                             *lattice-health*
 
 - No file watching. Refresh by hand.
-- No completion command. Edit the note to `- [x]`.
+- No state-cycling command. Edit the keyword (TODO -> DONE).
+- Org subset: no priorities, tags, SCHEDULED/DEADLINE or logging.
 - WBR, AI discovery, Portico publishing and Drafts import are not built.
 
 |:LatticeHealth| shows the root, config status, counts, unreadable paths,
