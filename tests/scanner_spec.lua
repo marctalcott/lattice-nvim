@@ -239,13 +239,22 @@ test("a bad front matter sequence is a per-file warning, not a scan failure", fu
   eq(result.warnings[1].line, 2)
 end)
 
+test("only notes with done items are stat'ed for their modified time", function()
+  local root = notes()
+  write(root, "a.md", "- TODO Open\n")
+  write(root, "b.md", "- DONE Finished\n")
+  local result = scanner.collect(root)
+  eq(result.tasks[1].mtime, nil)
+  eq(type(result.tasks[2].mtime), "number")
+end)
+
 test("todo in .lattice.json may be a string or a list", function()
   local root = notes()
   write(root, ".lattice.json", '{"todo": "A | B"}')
   eq(config.load(root).keywords.states, { A = "open", B = "done" })
   write(root, ".lattice.json", '{"todo": ["A | B", "C | D"]}')
   eq(config.load(root).keywords.first_open, "A")
-  eq(config.load(root).todo, { "A | B", "C | D" })
+  eq(config.load(root).keywords.sequences, { "A | B", "C | D" })
 end)
 
 test("old headings.todo settings are ignored with a notice", function()

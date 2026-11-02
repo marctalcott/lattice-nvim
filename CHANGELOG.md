@@ -18,6 +18,16 @@ Lattice is not released yet. This log tracks the work toward Milestone 1 of [`sp
 - Dashboard rows show each item's state, and a **DONE** group lists done-state items, most recently modified note first.
 - `:LatticeHealth` lists the root sequences and front matter problems.
 
+### Fixed (code review)
+
+- A note that opens with a horizontal rule is no longer mistaken for front matter. Front matter must start with a `key:` line and contain only YAML-shaped lines.
+- Front matter `todo:` also accepts unindented list items, flow lists, and `# comments`.
+- `<leader>lt` on a list item with sub-bullets inserts after them, so the sub-bullets stay with their own item.
+- Bullets indented as code inside a list are no longer tasks.
+- `- [x] TODO …` counts as done.
+- The DONE group shows the 20 most recent items plus a count of the rest.
+- Only notes with done items are checked for their modified time.
+
 ## Milestone 1 (merged in #1)
 
 ### Added

@@ -79,59 +79,112 @@ function M.build(sequences)
   return result
 end
 
-local function unquote(value)
+-- A scalar from YAML: trims, drops a trailing " # comment" outside quotes,
+-- and removes surrounding quotes.
+local function scalar(value)
   value = value:gsub("^%s+", ""):gsub("%s+$", "")
-  local inner = value:match('^"(.*)"$') or value:match("^'(.*)'$")
-  return inner or value
+  local quoted = value:match('^"(.-)"') or value:match("^'(.-)'")
+  if quoted then
+    return quoted
+  end
+  return (value:gsub("%s+#.*$", ""))
+end
+
+-- Items of a flow list "[a, b]", or nil when `value` is not one.
+local function flow_list(value)
+  local inner = value:match("^%[(.*)%]$")
+  if not inner then
+    return nil
+  end
+  local items = {}
+  for item in inner:gmatch("[^,]+") do
+    item = scalar(item)
+    if item ~= "" then
+      items[#items + 1] = item
+    end
+  end
+  return items
+end
+
+-- YAML front matter keys: a single word, optionally quoted, then ":".
+local function key_line(line)
+  return line:match("^[%w_%-]+:%s") or line:match("^[%w_%-]+:$") or line:match("^[\"'][^\"']+[\"']:")
+end
+
+-- True when a front matter line looks like YAML: a key, an indented line, a
+-- list item, or blank. A Markdown heading or prose line means the block is
+-- not front matter (for example a note that opens with a horizontal rule).
+local function yaml_line(line)
+  return line:match("^%s*$") or key_line(line) or line:match("^%s") or line:match("^%-%s") or line:match("^%-$")
 end
 
 --- Reads the `todo` key from YAML front matter at the top of a note:
 ---
 ---     ---
----     todo: TODO NEXT | DONE CANCELED
+---     todo: TODO NEXT | DONE CANCELED   # optional comment
 ---     ---
 ---
---- or, for several sequences, a block list:
+--- or, for several sequences, a block list (indented or not) or flow list:
 ---
 ---     todo:
 ---       - TODO NEXT | DONE
 ---       - BUG | FIXED
+---     todo: [TODO NEXT | DONE, BUG | FIXED]
 ---
---- Only this key is read; the rest of the front matter is ignored.
+--- Only this key is read; the rest of the front matter is ignored. The block
+--- counts as front matter only when it starts with a `key:` line and every
+--- line looks like YAML (keys, indented lines, list items, blanks).
 --- @return string[]|nil sequences  nil when there is no `todo` key
 --- @return integer|nil line  1-based line of the `todo` key
 --- @return integer last  last line of the front matter (0 if none)
 function M.front_matter(lines)
-  local first = (lines[1] or ""):gsub("^\239\187\191", ""):gsub("\r$", "")
-  if first ~= "---" then
+  local function line_at(i)
+    local line = (lines[i] or ""):gsub("\r$", "")
+    if i == 1 then
+      line = line:gsub("^\239\187\191", "")
+    end
+    return line
+  end
+  if line_at(1) ~= "---" then
     return nil, nil, 0
   end
-  local close
+  local close, seen_key
   for i = 2, #lines do
-    local line = lines[i]:gsub("\r$", "")
+    local line = line_at(i)
     if line == "---" or line == "..." then
       close = i
       break
     end
+    -- Front matter is a mapping: its first content line must be a key.
+    if not yaml_line(line) or (not seen_key and not line:match("^%s*$") and not key_line(line)) then
+      return nil, nil, 0
+    end
+    seen_key = seen_key or key_line(line) ~= nil
   end
   if not close then
     return nil, nil, 0
   end
 
   for i = 2, close - 1 do
-    local line = lines[i]:gsub("\r$", "")
-    local value = line:match("^todo:%s*(.-)%s*$")
+    local value = line_at(i):match("^todo:%s*(.-)%s*$")
     if value then
-      if value ~= "" then
-        return { unquote(value) }, i, close
+      value = value:gsub("^#.*$", "")
+      local flow = flow_list(value)
+      if flow then
+        return flow, i, close
+      end
+      if scalar(value) ~= "" then
+        return { scalar(value) }, i, close
       end
       local items = {}
       for j = i + 1, close - 1 do
-        local item = lines[j]:gsub("\r$", ""):match("^%s+%-%s+(.-)%s*$")
-        if not item then
+        local line = line_at(j)
+        local item = line:match("^%s*%-%s+(.-)%s*$")
+        if item then
+          items[#items + 1] = scalar(item)
+        elseif not line:match("^%s*$") and not line:match("^%s*#") then
           break
         end
-        items[#items + 1] = unquote(item)
       end
       return items, i, close
     end

@@ -135,8 +135,15 @@ function M.scan(root, cfg)
     local lines, err = read_lines(path)
     if lines then
       local parsed = parser.parse(lines, cfg)
-      local stat = vim.uv.fs_stat(path)
-      local mtime = stat and stat.mtime.sec or 0
+      -- The modified time only orders the DONE group, so stat just the
+      -- notes that have done-state items.
+      local mtime
+      for _, task in ipairs(parsed.tasks) do
+        if task.done and task.state and not mtime then
+          local stat = vim.uv.fs_stat(path)
+          mtime = stat and stat.mtime.sec or 0
+        end
+      end
       for _, task in ipairs(parsed.tasks) do
         task.rel, task.path, task.mtime = rel, path, mtime
         result.tasks[#result.tasks + 1] = task

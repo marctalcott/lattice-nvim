@@ -127,6 +127,30 @@ test("DONE lists done-state items, newest file first, without dates", function()
   assert(not text:find("Checked", 1, true))
 end)
 
+test("a checked keyword item is done, not open", function()
+  local root = notes()
+  write(root, "a.md", "- [x] TODO Checked off\n- TODO Still open\n")
+  local text = render(scanner.collect(root).tasks)
+  assert(section(text, "MY TO DO"):find("Still open", 1, true))
+  assert(not section(text, "MY TO DO"):find("Checked off", 1, true))
+  assert(section(text, "DONE"):find("[x] TODO Checked off", 1, true))
+end)
+
+test("DONE shows the 20 most recent items and counts the rest", function()
+  local tasks = {}
+  for i = 1, 25 do
+    tasks[#tasks + 1] = task({ state = "DONE", done = true, text = "Item " .. i, rel = ("n%02d.md"):format(i), mtime = i })
+  end
+  local text = render(tasks)
+  assert(text:find("DONE (25)", 1, true))
+  local done = text:match("DONE %(25%)\n(.-)\n\n")
+  local _, rows = done:gsub("%[x%]", "")
+  eq(rows, 20)
+  assert(done:find("^  %[x%] DONE Item 25\n"), done)
+  assert(done:find("  … and 5 more (the 20 most recent are shown)", 1, true))
+  assert(not done:find("Item 5\n", 1, true))
+end)
+
 test("shows promised dates without marking them overdue or sorting by them", function()
   local waiting = { section = "waiting" }
   local tasks = {

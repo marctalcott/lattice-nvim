@@ -87,7 +87,9 @@ A sequence lists states in order, as in org-mode's `#+TODO:`. Words before `|` a
   ---
   ```
 
-  Lattice reads only the `todo` key and ignores the rest of the front matter. If the value is invalid, the note uses the root sequences, and the problem is listed under WARNINGS.
+  Flow lists (`todo: [TODO | DONE, BUG | FIXED]`), unindented list items and `# comments` also work. Lattice reads only the `todo` key and ignores the rest of the front matter. If the value is invalid, the note uses the root sequences, and the problem is listed under WARNINGS.
+
+  A block between `---` lines counts as front matter only at the very top of the note, starting with a `key:` line, with every line looking like YAML. A note that merely opens with a horizontal rule is read normally.
 
 ### Rules
 
@@ -105,7 +107,7 @@ A sequence lists states in order, as in org-mode's `#+TODO:`. Words before `|` a
 - Keyword items count at any nesting depth. In a `Waiting On` section, plain bullets count only at the top level.
 - Ordered (`1.`) items, prose, and anything in a fenced or indented code block are never tasks. Front matter lines are never tasks either.
 - `Waiting On` matches exactly, at any heading level from `#` to `######`. Its section ends at the next heading. Keyword items inside it are waiting items; a keyword heading always counts as yours.
-- A checkbox before a keyword is allowed (`- [ ] TODO Task`), and the keyword decides the state.
+- A checkbox before a keyword is allowed. `- [x] TODO Task` counts as done, as does a done keyword (`- [ ] DONE Task`).
 - An `@Name` is one word, for example `@Raju` or `@Asha-Lee`. On your own items, an `@mention` is ordinary text.
 - An invalid date such as `[due:2026-02-30]` is never corrected. The task is shown with no date, and both the dashboard's WARNINGS block and `:LatticeHealth` list the problem.
 - Windows (CRLF) line endings and a UTF-8 BOM are handled.
@@ -151,7 +153,7 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 - **MY TO DO** and **WAITING ON** list open tasks, each row showing its keyword state. Tasks with a date come first, earliest first, so overdue items lead. Undated tasks follow. Ties are ordered by file path and line.
 - **OVERDUE** lists open tasks due before today, oldest first.
 - **DUE SOON** lists open tasks due from today through 7 days ahead, soonest first.
-- **DONE** lists items in a done state (DONE, CANCELED, …), from the most recently modified note first. Checked `[x]` Waiting On items without a keyword stay hidden.
+- **DONE** lists items in a done state (DONE, CANCELED, …) and checked keyword items (`- [x] TODO …`), from the most recently modified note first. It shows the 20 most recent and a count of the rest. Checked `[x]` Waiting On items without a keyword stay hidden.
 - A task can appear both in its owner group and in a date group. Each group's count covers only that group.
 - **INBOX** appears only if the inbox folder exists. See [Capture inbox](#capture-inbox).
 - **WARNINGS** appears when a file couldn't be read, a date is invalid, or a note's front matter `todo:` is invalid. `Enter` on a date or front matter line opens it at that line.
@@ -168,7 +170,7 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 
 Run these from a Markdown note. They edit only that buffer and never save it.
 
-- `<leader>lt` or `:LatticeAddTodo` asks for the task and adds `- TODO <task>` on the line below the cursor. It uses the note's first open keyword: from its front matter if it has one, else from the root sequences. On a list item, the new item matches that item's indent. If the cursor is in the front matter, the item goes just below it.
+- `<leader>lt` or `:LatticeAddTodo` asks for the task and adds `- TODO <task>` on the line below the cursor. It uses the note's first open keyword: from its front matter if it has one, else from the root sequences. On a list item, the new item matches that item's indent and goes after its sub-bullets, so they stay with their own item. If the cursor is in the front matter, the item goes just below it. Inside a `Waiting On` section the new item counts as a waiting item, like any keyword item there, so move the cursor out of the section first to add one of your own.
 - `<leader>ld` or `:LatticeAddWaiting` asks for a name (optional; press Enter to skip), then the task. It adds `- [ ] @Name <task>`, or `- [ ] <task>` if you skipped the name, under `Waiting On`:
   - The item goes after the last non-blank line of the section, below any existing items and their sub-bullets.
   - If the note has more than one `Waiting On` section, Lattice uses the one containing the cursor. If the cursor isn't inside one, it uses the nearest section above the cursor, or the first section if there are none above.
@@ -270,7 +272,6 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 - **Whole-tree scan.** Every refresh rescans all included notes synchronously. This is fast for typical note collections but not optimized for very large trees.
 - **No state-cycling command.** Change a task's state by editing its keyword (`TODO` → `DONE`), or check `[x]` on a Waiting On item.
 - **Org subset.** Keywords, sequences and per-file `todo:` follow org-mode. Priorities, tags, `SCHEDULED`/`DEADLINE`, `#+TYP_TODO`, and state-change logging are not supported. Lattice doesn't infer tasks from prose, and only one-word `@Name` assignees are recognized.
-- **DONE grows.** The DONE group lists every done item in the scanned notes. Archive old notes, or exclude them, to keep it short.
 - **Symlinks** are skipped entirely (see above).
 - **Not yet built:** WBR preparation, AI-assisted commitment discovery, Portico publishing, and automated Drafts import are planned for later milestones (see [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md) §11). The dashboard doesn't show or pretend to support them.
 

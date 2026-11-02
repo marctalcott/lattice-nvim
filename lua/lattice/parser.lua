@@ -117,7 +117,8 @@ local function parse_item(content, category, states, plain)
 
   local state, title = split_keyword(text, states)
   if state then
-    text, done = title, states[state] == "done"
+    -- Checked off either way counts: "- [x] TODO x" and "- DONE x" are done.
+    text, done = title, done or states[state] == "done"
   elseif not plain or text == "" then
     return nil
   end
@@ -172,6 +173,7 @@ function M.parse(lines, cfg)
   local section -- the Waiting On section being read, if any
   local fence -- the open code fence, if any
   local list_col -- content column of the current top-level item
+  local item_cols = {} -- content columns of the open list items, outermost first
   local prev_paragraph, prev_blank = false, true
 
   -- Records where the section ends: `stop` is the line before the next
@@ -219,7 +221,7 @@ function M.parse(lines, cfg)
         fence = opened
       elseif heading then
         close_section(i - 1)
-        list_col = nil
+        list_col, item_cols = nil, {}
         -- "## NEXT Draft plan" is itself a task; it is always mine.
         local task, bad_dates = parse_item(heading, "todo", states, false)
         if task then
@@ -231,32 +233,45 @@ function M.parse(lines, cfg)
         end
       elseif prev_paragraph and indent <= 3 and is_setext_underline(body) then
         close_section(i - 2)
-        list_col = nil
+        list_col, item_cols = nil, {}
       elseif indent <= 3 and is_thematic_break(body) then
-        list_col = nil
+        list_col, item_cols = nil, {}
       else
         local marker, gap, content, bullet = list_item(body)
         if marker then
           local nested = list_col and indent >= list_col
           local category = section and "waiting" or "todo"
+          local content_col = indent + #marker + (gap > 4 and 1 or gap)
           if not nested and (list_col or indent <= 3) then
-            list_col = indent + #marker + (gap > 4 and 1 or gap)
+            list_col = content_col
+            item_cols = { content_col }
             if bullet then
               local task, bad_dates = parse_item(content, category, states, section ~= nil)
               if task then
                 add(task, bad_dates, i)
               end
             end
-          elseif nested and bullet then
-            -- Nested bullets count only when they carry a keyword.
-            local task, bad_dates = parse_item(content, category, states, false)
-            if task then
-              add(task, bad_dates, i)
+          elseif nested then
+            -- Close the items this one is not inside of. A bullet indented 4+
+            -- columns past its container's content is code or continuation
+            -- text in CommonMark, not a list item.
+            while #item_cols > 1 and item_cols[#item_cols] > indent do
+              item_cols[#item_cols] = nil
+            end
+            if indent < item_cols[#item_cols] + 4 then
+              item_cols[#item_cols + 1] = content_col
+              -- Nested bullets count only when they carry a keyword.
+              if bullet then
+                local task, bad_dates = parse_item(content, category, states, false)
+                if task then
+                  add(task, bad_dates, i)
+                end
+              end
             end
           end
         else
           if prev_blank and indent == 0 then
-            list_col = nil
+            list_col, item_cols = nil, {}
           end
           paragraph = indent <= 3 and not (list_col and indent >= list_col)
         end

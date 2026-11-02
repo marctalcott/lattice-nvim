@@ -117,10 +117,11 @@ local function confirm(question, on_yes)
   end)
 end
 
---- Adds "- <KEYWORD> <text>" on the line below `cursor`, using the note's
---- first open keyword (from its front matter, else the root sequences). On
---- a list item it matches that item's indent; inside front matter it goes
---- just after it. Returns the new 1-based line, or nil and an error.
+--- Adds "- <KEYWORD> <text>" below `cursor`, using the note's first open
+--- keyword (from its front matter, else the root sequences). On a list item
+--- it matches that item's indent and goes after the item's sub-bullets;
+--- inside front matter it goes just after it. Returns the new 1-based line,
+--- or nil and an error.
 function M.insert_todo(buf, text, cfg, cursor)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local keyword = parser.parse(lines, cfg).keywords.first_open
@@ -129,14 +130,29 @@ function M.insert_todo(buf, text, cfg, cursor)
   end
   local _, _, front_end = keywords.front_matter(lines)
   cursor = math.max(cursor, front_end)
-  local indent = (lines[cursor] or ""):match("^([ \t]*)[-*+][ \t]") or ""
-  local entry = ("%s- %s %s"):format(indent, keyword, text)
+  local indent = (lines[cursor] or ""):match("^([ \t]*)[-*+][ \t]")
+  local entry = ("%s- %s %s"):format(indent or "", keyword, text)
   if #lines == 1 and lines[1] == "" then
     vim.api.nvim_buf_set_lines(buf, 0, 1, false, { entry })
     return 1
   end
-  vim.api.nvim_buf_set_lines(buf, cursor, cursor, false, { entry })
-  return cursor + 1
+  local after = cursor
+  if indent then
+    -- Go past the item's sub-bullets and continuation lines, so they stay
+    -- with their own item rather than moving under the new one.
+    local width = vim.fn.strdisplaywidth(indent)
+    for i = cursor + 1, #lines do
+      local line = lines[i]
+      if line:match("%S") then
+        if vim.fn.strdisplaywidth(line:match("^[ \t]*")) <= width then
+          break
+        end
+        after = i
+      end
+    end
+  end
+  vim.api.nvim_buf_set_lines(buf, after, after, false, { entry })
+  return after + 1
 end
 
 local function usable(buf)

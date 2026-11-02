@@ -8,6 +8,7 @@ local BUFFER_NAME = "lattice://dashboard"
 local MIN_WIDTH = 50
 local MAX_TEXT_COLUMN = 60
 local DUE_SOON_DAYS = 7
+local DONE_LIMIT = 20 -- most recent done items shown
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
 local FOOTER = "Enter  Open note    r  Refresh    q  Close    ?  Help"
 
@@ -124,6 +125,21 @@ function M.due_soon(tasks, today)
   end)
 end
 
+-- forward declaration; defined after build_rows
+local build_rows
+
+-- The DONE group: the most recent DONE_LIMIT items, with the full count in
+-- the title and a closing line for the rest.
+function M.done_group(tasks, today, col)
+  local done = M.done(tasks)
+  local shown = vim.list_slice(done, 1, DONE_LIMIT)
+  local group = { title = "DONE", count = #done, rows = build_rows(shown, today, "[x]", "DiagnosticOk", col, true) }
+  if #done > DONE_LIMIT then
+    group.more = ("  … and %d more (the %d most recent are shown)"):format(#done - DONE_LIMIT, DONE_LIMIT)
+  end
+  return group
+end
+
 -- "STATE Name — text", plus highlight spans relative to the label start.
 local function task_label(task)
   local label, spans = "", {}
@@ -153,7 +169,7 @@ end
 
 -- Builds one row per task: `mark` prefix, label, then dates in a column
 -- (unless `no_dates`).
-local function build_rows(tasks, today, mark, mark_hl, text_col, no_dates)
+function build_rows(tasks, today, mark, mark_hl, text_col, no_dates)
   local rows = {}
   for _, task in ipairs(tasks) do
     local label, spans = task_label(task)
@@ -271,7 +287,7 @@ function M.render(result, today, opts)
         note = "[within next 7 days; excludes overdue]",
         rows = build_rows(M.due_soon(result.tasks, today), today, "· ", "DiagnosticWarn", col),
       },
-      { title = "DONE", rows = build_rows(M.done(result.tasks), today, "[x]", "DiagnosticOk", col, true) },
+      M.done_group(result.tasks, today, col),
     }
     if result.inbox then
       groups[#groups + 1] = { title = "INBOX", rows = build_inbox_rows(result.inbox, today) }
@@ -321,7 +337,7 @@ function M.render(result, today, opts)
   end
 
   for _, group in ipairs(groups) do
-    local title = ("%s (%d)"):format(group.title, #group.rows)
+    local title = ("%s (%d)"):format(group.title, group.count or #group.rows)
     add(title, "Title")
     if group.note then
       lines[#lines] = title .. "  " .. group.note
@@ -336,6 +352,9 @@ function M.render(result, today, opts)
       for _, part in ipairs(row.parts) do
         highlights[#highlights + 1] = { line = #lines - 1, col = part.col, len = part.len, hl = part.hl }
       end
+    end
+    if group.more then
+      add(group.more, "Comment")
     end
     add("")
   end

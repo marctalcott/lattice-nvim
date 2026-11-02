@@ -79,8 +79,8 @@ test("nested bullets count when they carry a keyword", function()
   eq(texts(result), { "Child", "Grandchild" })
 end)
 
-test("a checkbox before the keyword is allowed; the keyword decides the state", function()
-  eq(states(parse("- [ ] TODO A\n- [x] TODO B\n- [ ] DONE C")), { "TODO", "TODO", "DONE x" })
+test("a checkbox before the keyword is allowed; [x] or a done keyword means done", function()
+  eq(states(parse("- [ ] TODO A\n- [x] TODO B\n- [X] TODO C\n- [ ] DONE D")), { "TODO", "TODO x", "TODO x", "DONE x" })
 end)
 
 test("keywords in code fences and indented code are ignored", function()
@@ -141,6 +141,29 @@ test("front matter without todo, or not at the top, changes nothing", function()
   eq(texts(parse("# Title\n---\ntodo: NEXT | DONE\n---\n- TODO A\n- NEXT B")), { "A" })
   -- An unclosed front matter block is ordinary text.
   eq(texts(parse("---\ntodo: NEXT | DONE\n- TODO A")), { "A" })
+end)
+
+test("a note that opens with a horizontal rule is not front matter", function()
+  -- The review's example: on main the Waiting On item was listed.
+  local result = parse("---\n## Waiting On\n- [ ] @a thing\n- TODO x\n---")
+  eq(texts(result), { "thing", "x" })
+  eq(texts(parse("---\n- TODO a\n- TODO b\n---")), { "a", "b" })
+  eq(texts(parse("---\nSome prose: here\n- TODO a\n---")), { "a" })
+end)
+
+test("front matter accepts unindented and flow lists, and comments", function()
+  eq(states(parse("---\ntodo:\n- NEXT | DONE\n- BUG | FIXED\n---\n- NEXT a\n- BUG b")), { "NEXT", "BUG" })
+  eq(states(parse("---\ntodo: [NEXT | DONE, BUG | FIXED]\n---\n- NEXT a\n- FIXED b")), { "NEXT", "FIXED x" })
+  eq(states(parse("---\ntodo: NEXT | DONE  # my keywords\n---\n- NEXT a")), { "NEXT" })
+  eq(states(parse("---\ntodo:\n  # comment\n  - NEXT | DONE # trailing\n---\n- NEXT a")), { "NEXT" })
+  eq(parse("---\ntitle: \"A # not a comment\"\ntodo: NEXT | DONE\n---\n- NEXT a").warnings, {})
+end)
+
+test("a bullet indented as code inside a list is not a task", function()
+  eq(#parse("- parent\n\n      - TODO example").tasks, 0)
+  eq(#parse("- parent\n      - TODO continuation text").tasks, 0)
+  -- Deep but properly nested items still count.
+  eq(texts(parse("- a\n  - b\n    - c\n      - TODO d\n  - TODO e")), { "d", "e" })
 end)
 
 -- Waiting On sections --------------------------------------------------------

@@ -74,7 +74,8 @@ state. Suffixes such as `TODO(t)` are ignored.
 
 - Root sequences: `todo` in .lattice.json (default `TODO | DONE`).
 - Per-note sequences: a `todo:` key in YAML front matter, as a string or a
-  list. It replaces the root sequences for that note. If it is invalid,
+  list (block or flow). The block must start the note and begin with a
+  `key:` line; a note that opens with a horizontal rule is read normally. It replaces the root sequences for that note. If it is invalid,
   the note uses the root sequences and WARNINGS lists the problem.
 
                                                             *lattice-waiting*
@@ -89,14 +90,16 @@ Unassigned.
 sorting. Invalid dates are not corrected: the task is shown undated and
 the dashboard's WARNINGS block lists it. <CR> there opens its line.
 
-Code blocks, front matter lines, ordered items and prose are never tasks.
+`- [x] TODO x` counts as done. Code blocks (including bullets indented as
+code inside a list), front matter lines, ordered items and prose are never
+tasks.
 
 =====
 4. DASHBOARD                                                *lattice-dashboard*
 
 Groups: MY TO DO, WAITING ON, OVERDUE (due before today, oldest first),
 DUE SOON (today through 7 days ahead, soonest first), and DONE (done-state
-items, most recently modified note first). Rows show each item's state. INBOX appears when the
+and checked keyword items, the 20 most recent). Rows show each item's state. INBOX appears when the
 inbox folder exists. Owner groups list dated tasks first, by date, then
 undated tasks by file and line.
 
@@ -113,7 +116,8 @@ Lattice reads saved files. Save a note, then refresh.
 
 |:LatticeAddTodo| asks for text and adds `- TODO <text>` on the line below
 the cursor, using the note's first open keyword (front matter, else root).
-On a list item it matches the item's indent. |:LatticeAddWaiting| asks for
+On a list item it matches the item's indent and goes after its
+sub-bullets. Inside a Waiting On section the item counts as waiting. |:LatticeAddWaiting| asks for
 an optional one-word name, then text, and adds `- [ ] @Name <text>` under
 `Waiting On`:
 

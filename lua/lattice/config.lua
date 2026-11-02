@@ -28,7 +28,6 @@ function M.defaults()
     scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
     -- Org-style keyword sequences for the whole notes root; a note's YAML
     -- front matter `todo:` replaces them for that note.
-    todo = vim.deepcopy(keywords.DEFAULT),
     keywords = assert(keywords.build(keywords.DEFAULT)),
     headings = { waiting = "Waiting On" },
     inbox = { path = "Inbox" },
@@ -145,7 +144,6 @@ local function validate(raw)
     if not built then
       return nil, ("todo: %s"):format(err)
     end
-    cfg.todo = type(raw.todo) == "string" and { raw.todo } or raw.todo
     cfg.keywords = built
   end
 
