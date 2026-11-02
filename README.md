@@ -78,7 +78,7 @@ Rules:
 - Only top-level items count. Nested bullets, continuation lines, and ordered (`1.`) items are not tasks.
 - Anything inside a fenced code block is ignored, including headings.
 - An `@Name` is one word, for example `@Raju` or `@Asha-Lee`. In `To Do`, an `@mention` is ordinary text.
-- An invalid date such as `[due:2026-02-30]` is never corrected. The task is shown with no date, and `:LatticeHealth` lists the problem.
+- An invalid date such as `[due:2026-02-30]` is never corrected. The task is shown with no date, and the dashboard's WARNINGS block and `:LatticeHealth` list the problem.
 - Windows (CRLF) line endings and a UTF-8 BOM are handled.
 
 ## Dashboard
@@ -116,6 +116,7 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 - **DUE SOON** lists open tasks due from today through 7 days ahead, soonest first.
 - A task can appear both in its owner group and in a date group. Each group's count covers only that group.
 - **INBOX** appears only if the inbox folder exists. See [Capture inbox](#capture-inbox).
+- **WARNINGS** appears when a file couldn't be read or a date is invalid. `Enter` on an invalid-date line opens it at that line.
 - With no open tasks, the dashboard says which headings it looks for, and the header shows the scanned root and note count.
 
 | Key     | Action                                                                 |
@@ -137,6 +138,7 @@ How Lattice chooses where to add:
 - The new item goes after the last non-blank line of the section, below any existing items and their sub-bullets.
 - If the note has more than one matching section, Lattice uses the one containing the cursor. If the cursor isn't inside one, it uses the nearest section above the cursor, or the first section if there are none above.
 - If the note has no matching section, Lattice asks before adding `## To Do` or `## Waiting On` at the end. Answer No, or cancel any prompt with `Esc`, and the buffer stays exactly as it was.
+- If the new item lands inside a code fence that is never closed, Lattice can't list it, so it warns you to close the fence.
 
 ## Commands and keymaps
 
@@ -150,7 +152,7 @@ How Lattice chooses where to add:
 
 Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting` and `health`.
 
-Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. To change or turn off keys:
+Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
 
 ```lua
 opts = {

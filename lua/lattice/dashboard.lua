@@ -52,8 +52,13 @@ local function date_label(iso, today)
   return label
 end
 
+local WEEKDAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+
+-- English names regardless of locale, matching the row date labels.
 local function header_date(today)
-  return os.date("%a %b %d", to_time(today))
+  local _, m, d = today:match("^(%d+)-(%d+)-(%d+)$")
+  local wday = os.date("*t", to_time(today)).wday
+  return ("%s %s %s"):format(WEEKDAYS[wday], MONTHS[tonumber(m)], d)
 end
 
 local function by_due_then_source(a, b)
@@ -208,7 +213,7 @@ end
 
 --- @param result table  output of scanner.collect
 --- @param today string  YYYY-MM-DD
---- @param opts? { help: boolean, keymaps: table|false }
+--- @param opts? { help: boolean, keymaps: table|false }  keymaps: the ones actually mapped
 --- @return { lines: string[], highlights: table[], targets: table<integer, table> }
 function M.render(result, today, opts)
   opts = opts or {}
@@ -302,17 +307,23 @@ function M.render(result, today, opts)
     add("")
   end
 
-  local warnings = #(result.unreadable or {}) + #(result.date_errors or {})
-  if result.notice or warnings > 0 then
-    if result.notice then
-      add(result.notice, "DiagnosticWarn")
+  if result.notice then
+    add(result.notice, "DiagnosticWarn")
+  end
+  local unreadable, date_errors = result.unreadable or {}, result.date_errors or {}
+  local warnings = #unreadable + #date_errors
+  if warnings > 0 then
+    local title = ("WARNINGS (%d)"):format(warnings)
+    local note = "Enter opens a date; :LatticeHealth for details"
+    add(title .. "  " .. note, "DiagnosticWarn")
+    for _, item in ipairs(unreadable) do
+      add(("  Could not read %s: %s"):format(item.path, item.message))
     end
-    if warnings > 0 then
-      add(("%d warning%s (unreadable files or invalid dates): run :LatticeHealth"):format(
-        warnings,
-        warnings == 1 and "" or "s"
-      ), "DiagnosticWarn")
+    for _, item in ipairs(date_errors) do
+      add(("  Invalid date, shown undated: %s:%d [%s:%s]"):format(item.rel, item.line, item.tag, item.value))
+      targets[#lines] = { path = item.path, line = item.line }
     end
+    add("")
   end
 
   add(("─"):rep(rule_width), "Comment")
@@ -327,7 +338,7 @@ end
 local function paint()
   local view = M.render(state.result, os.date("%Y-%m-%d"), {
     help = state.help,
-    keymaps = config.options.keymaps,
+    keymaps = config.active_keymaps,
   })
   local buf = state.buf
   state.targets = view.targets

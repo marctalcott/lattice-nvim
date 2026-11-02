@@ -128,14 +128,34 @@ test("an empty scan explains what Lattice looks for and shows the root", functio
   assert(text:find("(none)", 1, true))
 end)
 
-test("points to :LatticeHealth for warnings and shows the config notice", function()
-  local text = render({}, nil, {
+test("lists warnings with the config notice and a pointer to :LatticeHealth", function()
+  local text, view = render({}, nil, {
     notice = "No config",
     unreadable = { { path = "bad.md", message = "EACCES" } },
     date_errors = { { rel = "a.md", path = "/n/a.md", line = 3, tag = "due", value = "soon" } },
   })
   assert(text:find("No config", 1, true))
-  assert(text:find("2 warnings (unreadable files or invalid dates): run :LatticeHealth", 1, true))
+  assert(text:find("WARNINGS (2)  Enter opens a date; :LatticeHealth for details", 1, true))
+  assert(text:find("  Could not read bad.md: EACCES", 1, true))
+  local date_line
+  for i, line in ipairs(view.lines) do
+    if line:find("Invalid date, shown undated: a.md:3 [due:soon]", 1, true) then
+      date_line = i
+    end
+  end
+  assert(date_line, text)
+  eq(view.targets[date_line], { path = "/n/a.md", line = 3 })
+end)
+
+test("the header date uses English names whatever the locale", function()
+  local saved = os.setlocale(nil, "time")
+  local german = os.setlocale("de_DE.UTF-8", "time") or os.setlocale("de_DE", "time")
+  local text = render({}, "2026-11-08")
+  os.setlocale(saved, "time")
+  assert(text:find("^LATTICE%s+Sun Nov 08\n"), text)
+  if not german then
+    print("note: de_DE locale unavailable; locale part of header test not exercised")
+  end
 end)
 
 test("help lists keys, commands, and configured keymaps", function()
@@ -160,6 +180,33 @@ test("Enter opens the original file at the exact line", function()
   press_enter_on("Estimate")
   eq(vim.api.nvim_buf_get_name(0), path)
   eq(vim.api.nvim_win_get_cursor(0)[1], 5)
+end)
+
+test("Enter on an invalid-date warning opens that line", function()
+  local root = notes()
+  local path = write(root, "a.md", "## To Do\n- Task\n- Other [due:soon]\n")
+  reset(root)
+  lattice.open()
+  press_enter_on("a.md:3")
+  eq(vim.api.nvim_buf_get_name(0), path)
+  eq(vim.api.nvim_win_get_cursor(0)[1], 3)
+end)
+
+test("help shows only the keymaps Lattice actually set", function()
+  local saved = vim.deepcopy(config.options)
+  local root = notes()
+  write(root, "a.md", "## To Do\n- Task\n")
+  vim.keymap.set("n", "<leader>ll", "<cmd>echo 'mine'<cr>", { desc = "my own mapping" })
+  lattice.setup({ root = root })
+  reset(root)
+  lattice.open()
+  vim.api.nvim_feedkeys("?", "x", false)
+  local text = dashboard_text()
+  assert(text:find("Keymaps: <leader>lr refresh, <leader>lt add To Do, <leader>ld add Waiting On", 1, true), text)
+  assert(not text:find("<leader>ll dashboard", 1, true))
+  vim.keymap.del("n", "<leader>ll")
+  lattice.setup({ root = root, keymaps = false })
+  config.options = saved
 end)
 
 test("? toggles help in the dashboard", function()

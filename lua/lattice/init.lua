@@ -15,15 +15,40 @@ function M.health()
   vim.cmd("checkhealth lattice")
 end
 
-local function is_ours(lhs)
-  local existing = vim.fn.maparg(lhs, "n", false, true)
-  return vim.tbl_isempty(existing) or (existing.desc or ""):match("^Lattice: ") ~= nil
+-- The global normal-mode mapping for `lhs`, ignoring buffer-local ones:
+-- maparg() prefers the current buffer's mappings, so ask from a scratch
+-- buffer that has none.
+local function global_mapping(lhs)
+  local scratch = vim.api.nvim_create_buf(false, true)
+  local found = vim.api.nvim_buf_call(scratch, function()
+    return vim.fn.maparg(lhs, "n", false, true)
+  end)
+  vim.api.nvim_buf_delete(scratch, { force = true })
+  return not vim.tbl_isempty(found) and found or nil
+end
+
+local function is_lattice(mapping)
+  return mapping ~= nil and (mapping.desc or ""):match("^Lattice: ") ~= nil
+end
+
+-- Removes the mappings an earlier setup() created, so a reload with other
+-- keys or `keymaps = false` leaves nothing stale. Mappings the user has
+-- since replaced are left alone.
+local function clear_keymaps()
+  for _, lhs in pairs(config.active_keymaps) do
+    if is_lattice(global_mapping(lhs)) then
+      pcall(vim.keymap.del, "n", lhs)
+    end
+  end
+  config.active_keymaps = {}
+  health.keymap_conflicts = {}
 end
 
 -- Sets each keymap unless the key already does something else, in which
 -- case it is skipped with a warning (also listed in :LatticeHealth).
+-- config.active_keymaps records what was actually mapped.
 local function set_keymaps(keymaps)
-  health.keymap_conflicts = {}
+  clear_keymaps()
   if not keymaps then
     return
   end
@@ -35,13 +60,15 @@ local function set_keymaps(keymaps)
   }
   local skipped = {}
   for _, action in ipairs(actions) do
-    local lhs = keymaps[action[1]]
+    local name, lhs = action[1], keymaps[action[1]]
     if lhs then
-      if is_ours(lhs) then
+      local existing = global_mapping(lhs)
+      if existing == nil or is_lattice(existing) then
         vim.keymap.set("n", lhs, action[2], { desc = action[3] })
+        config.active_keymaps[name] = lhs
       else
-        health.keymap_conflicts[#health.keymap_conflicts + 1] = { lhs = lhs, action = action[1] }
-        skipped[#skipped + 1] = ("%s (%s)"):format(lhs, action[1])
+        health.keymap_conflicts[#health.keymap_conflicts + 1] = { lhs = lhs, action = name }
+        skipped[#skipped + 1] = ("%s (%s)"):format(lhs, name)
       end
     end
   end

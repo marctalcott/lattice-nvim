@@ -66,30 +66,46 @@ local function find_sections(lines, kind, headings)
 end
 
 --- Adds `entry` at the end of the chosen section (after its last non-blank
---- line). Returns false, changing nothing, when the section is missing.
+--- line). Returns the new 1-based line, or nil, changing nothing, when the
+--- section is missing.
 function M.insert(buf, kind, entry, headings, cursor)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local sections = find_sections(lines, kind, headings)
   if #sections == 0 then
-    return false
+    return nil
   end
   local section = M.pick_section(sections, cursor or 1)
   vim.api.nvim_buf_set_lines(buf, section.last, section.last, false, { entry })
-  return true
+  return section.last + 1
 end
 
 --- Appends a new `## <heading>` section with `entry` at the end of the note.
+--- Returns the entry's 1-based line.
 function M.append_section(buf, kind, entry, headings)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local block = { "## " .. headings[kind], entry }
   if #lines == 1 and lines[1] == "" then
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, block)
-    return
+    return 2
   end
   if vim.trim(lines[#lines]) ~= "" then
     table.insert(block, 1, "")
   end
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, block)
+  return #lines + #block
+end
+
+--- Warns when the entry at `line` is not read back as a task, which happens
+--- when it lands inside a code fence that is never closed.
+function M.check_visible(buf, line, headings)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for _, task in ipairs(parser.parse(lines, headings).tasks) do
+    if task.line == line then
+      return true
+    end
+  end
+  warn(("line %d was added, but Lattice won't list it: it is inside a code fence (```) that is never closed. Close the fence to fix it."):format(line))
+  return false
 end
 
 local function confirm(question, on_yes)
@@ -111,12 +127,14 @@ local function finish(buf, kind, entry, cursor)
   if not headings then
     return
   end
-  if M.insert(buf, kind, entry, headings, cursor) then
+  local line = M.insert(buf, kind, entry, headings, cursor)
+  if line then
+    M.check_visible(buf, line, headings)
     return
   end
   confirm(('This note has no "%s" heading. Add one at the end?'):format(headings[kind]), function()
     if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modifiable then
-      M.append_section(buf, kind, entry, headings)
+      M.check_visible(buf, M.append_section(buf, kind, entry, headings), headings)
     end
   end)
 end

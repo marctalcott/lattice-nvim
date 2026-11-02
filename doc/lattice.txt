@@ -68,7 +68,7 @@ setup({opts})
 - `[due:YYYY-MM-DD]` is the due date (follow-up date for `Waiting On`).
   `[promised:YYYY-MM-DD]` (Waiting On only) is shown but does not affect
   sorting. Invalid dates are not corrected: the task is shown undated and
-  |:LatticeHealth| reports the date.
+  the dashboard's WARNINGS block lists it. <CR> there opens its line.
 
 ==============================================================================
 4. DASHBOARD                                                *lattice-dashboard*
@@ -99,6 +99,8 @@ name, then text, and adds `- [ ] @Name <text>` under `Waiting On`.
 - With none: Lattice asks before adding the heading at the end of the note.
 - Cancelling any prompt leaves the buffer unchanged. The buffer is never
   saved for you.
+- If the item lands inside a never-closed code fence, Lattice warns that it
+  can't list it.
 
 ==============================================================================
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
@@ -114,8 +116,10 @@ name, then text, and adds `- [ ] @Name <text>` under `Waiting On`.
                                                               *:LatticeHealth*
 :LatticeHealth      Same as `:checkhealth lattice`.
 
-If a default key is already mapped, Lattice keeps your mapping, warns once,
-and lists the key in |:LatticeHealth|.
+If a default key already has a global mapping, Lattice keeps your mapping,
+warns once, and lists the key in |:LatticeHealth|. Running setup() again
+removes the keys the previous run created. Invalid keymap values are
+reported and ignored.
 
 ==============================================================================
 7. CONFIGURATION                                               *lattice-config*

@@ -66,6 +66,59 @@ test("setup can disable or override keymaps", function()
   config.options = saved
 end)
 
+test("a buffer-local mapping is not a conflict", function()
+  local saved = vim.deepcopy(config.options)
+  vim.cmd("enew!")
+  vim.keymap.set("n", "<leader>lt", "<cmd>echo 'local'<cr>", { buffer = 0, desc = "buffer map" })
+  lattice.setup({ root = "~/x" })
+  eq(H.health.keymap_conflicts, {})
+  eq(config.active_keymaps.add_todo, "<leader>lt")
+  vim.cmd("enew!")
+  eq(vim.fn.maparg("<leader>lt", "n", false, true).desc, "Lattice: add To Do")
+  lattice.setup({ root = "~/x", keymaps = false })
+  config.options = saved
+end)
+
+test("setup again removes the keymaps it set before", function()
+  local saved = vim.deepcopy(config.options)
+  lattice.setup({ root = "~/x" })
+  eq(vim.fn.maparg("<leader>ll", "n", false, true).desc, "Lattice: open dashboard")
+  lattice.setup({ root = "~/x", keymaps = { open = "<leader>nl" } })
+  eq(vim.fn.maparg("<leader>ll", "n"), "")
+  eq(vim.fn.maparg("<leader>nl", "n", false, true).desc, "Lattice: open dashboard")
+  lattice.setup({ root = "~/x", keymaps = false })
+  for _, lhs in ipairs({ "<leader>nl", "<leader>lt", "<leader>ld", "<leader>lr" }) do
+    eq(vim.fn.maparg(lhs, "n"), "")
+  end
+  eq(config.active_keymaps, {})
+  config.options = saved
+end)
+
+test("setup does not remove a mapping the user put in place of Lattice's", function()
+  local saved = vim.deepcopy(config.options)
+  lattice.setup({ root = "~/x" })
+  vim.keymap.set("n", "<leader>lr", "<cmd>echo 'mine'<cr>", { desc = "mine now" })
+  lattice.setup({ root = "~/x", keymaps = false })
+  eq(vim.fn.maparg("<leader>lr", "n", false, true).desc, "mine now")
+  vim.keymap.del("n", "<leader>lr")
+  config.options = saved
+end)
+
+test("invalid keymap values are reported and ignored instead of failing setup", function()
+  local saved = vim.deepcopy(config.options)
+  lattice.setup({ root = "~/x", keymaps = { open = true, add_todo = "", bogus = "<leader>x" } })
+  local message = H.last_notify().message
+  assert(message:find("keymaps.open must be a key string or false, not true", 1, true), message)
+  assert(message:find('keymaps.add_todo must be a key string or false, not ""', 1, true), message)
+  assert(message:find("unknown keymaps.bogus", 1, true), message)
+  eq(H.last_notify().level, vim.log.levels.ERROR)
+  eq(config.options.keymaps.open, false)
+  eq(config.options.keymaps.refresh, "<leader>lr")
+  eq(config.active_keymaps.open, nil)
+  lattice.setup({ root = "~/x", keymaps = false })
+  config.options = saved
+end)
+
 test("setup keeps an existing mapping and reports it", function()
   local saved = vim.deepcopy(config.options)
   vim.keymap.set("n", "<leader>lt", "<cmd>echo 'mine'<cr>", { desc = "my own mapping" })
