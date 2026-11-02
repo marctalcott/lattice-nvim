@@ -17,6 +17,6 @@ This repository is Lattice, an independent Neovim/LazyVim plugin. Portico is a d
 
 ## Development approach
 
-Read specs/product-vision.md for the full intent, then specs/lattice-v0.1.md for the implementation contract. Do not implement deferred requirements unless explicitly requested. Implement smallest viable scanner and UI. Add automated tests for task parsing, heading boundaries, exclusion patterns, completion detection, and source navigation. Keep dependencies minimal; do not alter user notes simply because a scan ran. Ask before introducing a new persistent file format or deviating from the spec.
+Read specs/product-vision.md for the full intent, then specs/LATTICE_SPEC.md for the Milestone 1 implementation contract (it supersedes specs/lattice-v0.1.md where they differ). Do not implement deferred requirements unless explicitly requested. Implement smallest viable scanner and UI. Add automated tests for task parsing, heading boundaries, exclusion patterns, completion detection, and source navigation. Keep dependencies minimal; do not alter user notes simply because a scan ran. Ask before introducing a new persistent file format or deviating from the spec.
 
 Run the tests with `nvim -l tests/run.lua`.

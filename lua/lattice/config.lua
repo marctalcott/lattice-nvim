@@ -3,21 +3,23 @@ local M = {}
 
 M.filename = ".lattice.json"
 
+local DEFAULT_KEYMAPS = {
+  open = "<leader>ll",
+  add_todo = "<leader>lt",
+  add_waiting = "<leader>ld",
+  refresh = "<leader>lr",
+}
+
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
 M.options = {
   root = nil,
-  keymaps = {
-    open = "<leader>ll",
-    add_todo = "<leader>lt",
-    add_waiting = "<leader>ld",
-    refresh = "<leader>lr",
-  },
+  keymaps = vim.deepcopy(DEFAULT_KEYMAPS),
 }
 
 function M.defaults()
   return {
     version = 1,
-    scan = { include = { "**/*.md" }, exclude = { "Archives/**" } },
+    scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
     headings = { todo = "To Do", waiting = "Waiting On" },
     inbox = { path = "Inbox" },
   }
@@ -37,13 +39,9 @@ function M.setup(opts)
   if opts.keymaps == false then
     M.options.keymaps = false
   elseif type(opts.keymaps) == "table" then
-    local keymaps = M.options.keymaps or {}
-    M.options.keymaps = vim.tbl_extend("force", {
-      open = "<leader>ll",
-      add_todo = "<leader>lt",
-      add_waiting = "<leader>ld",
-      refresh = "<leader>lr",
-    }, keymaps, opts.keymaps)
+    M.options.keymaps = vim.tbl_extend("force", DEFAULT_KEYMAPS, opts.keymaps)
+  else
+    M.options.keymaps = vim.deepcopy(DEFAULT_KEYMAPS)
   end
   return M.options
 end
@@ -136,7 +134,7 @@ end
 function M.load(root)
   local path = root .. "/" .. M.filename
   if not vim.uv.fs_stat(path) then
-    return M.defaults(), ("No %s in %s; using defaults."):format(M.filename, root)
+    return M.defaults(), ("No %s in %s; using defaults."):format(M.filename, vim.fn.fnamemodify(root, ":~"))
   end
 
   local file, open_err = io.open(path, "r")

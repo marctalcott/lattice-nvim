@@ -42,7 +42,8 @@ function M.list_files(root, scan)
         kind = stat and stat.type
       end
       if kind == "directory" then
-        if not (excluded(rel) or excluded(rel .. "/")) then
+        -- Git metadata is never scanned, whatever the exclude list says.
+        if name ~= ".git" and not (excluded(rel) or excluded(rel .. "/")) then
           visit(rel)
         end
       elseif kind == "file" and rel:match("%.md$") and included(rel) and not excluded(rel) then
@@ -176,7 +177,7 @@ function M.collect(root)
   end
 
   local result = M.scan(root, cfg)
-  result.root, result.notice = root, notice
+  result.root, result.notice, result.headings = root, notice, cfg.headings
   return result
 end
 

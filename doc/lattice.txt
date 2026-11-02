@@ -1,0 +1,150 @@
+*lattice.txt*  Local task dashboard for Markdown notes
+
+==============================================================================
+CONTENTS                                                     *lattice-contents*
+
+  1. Introduction ........................................ |lattice-intro|
+  2. Setup ............................................... |lattice-setup|
+  3. Note format ......................................... |lattice-format|
+  4. Dashboard ........................................... |lattice-dashboard|
+  5. Adding tasks ........................................ |lattice-insert|
+  6. Commands and keymaps ................................ |lattice-commands|
+  7. Configuration (.lattice.json) ....................... |lattice-config|
+  8. Limitations and troubleshooting ..................... |lattice-health|
+
+==============================================================================
+1. INTRODUCTION                                                 *lattice-intro*
+
+Lattice lists the open tasks in your Markdown notes: what you owe (under
+`To Do` headings) and what others owe you (under `Waiting On` headings). The
+notes stay the only source of truth. Scanning is read-only, and nothing
+leaves your machine.
+
+Tested on Neovim 0.12.4 (macOS).
+
+==============================================================================
+2. SETUP                                                        *lattice-setup*
+
+lazy.nvim / LazyVim (`~/.config/nvim/lua/plugins/lattice.lua`): >lua
+    return {
+      {
+        "marctalcott/lattice-nvim",
+        lazy = false,
+        opts = { root = "~/Documents/WorkNotes" },
+      },
+    }
+<
+Without a plugin manager: >lua
+    require("lattice").setup({ root = "~/Documents/WorkNotes" })
+<
+                                                              *lattice.setup()*
+setup({opts})
+    {root}     (string, required) Notes root. Lattice never guesses it.
+    {keymaps}  (table|false) Keys for `open`, `refresh`, `add_todo`,
+               `add_waiting`. Each may be a key string or false. Set
+               `keymaps = false` to create none. Defaults: `<leader>ll`,
+               `<leader>lr`, `<leader>lt`, `<leader>ld`.
+
+==============================================================================
+3. NOTE FORMAT                                                 *lattice-format*
+
+>markdown
+    ## To Do
+    - Prepare revised staffing plan
+    - [ ] Send project update [due:2026-11-05]
+    - [x] Review the completed migration
+
+    ## Waiting On
+    - @Raju Provide deployment estimate [due:2026-11-06]
+    - [ ] Follow up with vendor [promised:2026-11-04]
+<
+- Headings must be exactly `To Do` or `Waiting On` (case-sensitive) at any
+  level, `#` to `######`. A section ends at the next heading of any level.
+- Only top-level `-`, `*` or `+` items count. `- Task` and `- [ ] Task` are
+  open. `- [x]` and `- [X]` are complete and hidden.
+- Nested items and anything in fenced code blocks are ignored.
+- In `Waiting On`, a leading one-word `@Name` names the person. Without one,
+  the item shows as Unassigned.
+- `[due:YYYY-MM-DD]` is the due date (follow-up date for `Waiting On`).
+  `[promised:YYYY-MM-DD]` (Waiting On only) is shown but does not affect
+  sorting. Invalid dates are not corrected: the task is shown undated and
+  |:LatticeHealth| reports the date.
+
+==============================================================================
+4. DASHBOARD                                                *lattice-dashboard*
+
+Groups: MY TO DO, WAITING ON, OVERDUE (due before today, oldest first), and
+DUE SOON (today through 7 days ahead, soonest first). INBOX appears when the
+inbox folder exists. Owner groups list dated tasks first, by date, then
+undated tasks by file and line.
+
+    <CR>    Open the task's note at its line. Unsaved changes in an
+            already-open buffer are kept.
+    r       Rescan notes and reread .lattice.json
+    q       Close and return to the previous buffer
+    ?       Toggle help
+
+Lattice reads saved files. Save a note, then refresh.
+
+==============================================================================
+5. ADDING TASKS                                                *lattice-insert*
+
+|:LatticeAddTodo| asks for text and adds `- [ ] <text>` under `To Do` in the
+current Markdown buffer. |:LatticeAddWaiting| asks for an optional one-word
+name, then text, and adds `- [ ] @Name <text>` under `Waiting On`.
+
+- The item goes after the section's last non-blank line.
+- With several matching sections: the one containing the cursor, else the
+  nearest one above the cursor, else the first.
+- With none: Lattice asks before adding the heading at the end of the note.
+- Cancelling any prompt leaves the buffer unchanged. The buffer is never
+  saved for you.
+
+==============================================================================
+6. COMMANDS AND KEYMAPS                                      *lattice-commands*
+
+                                                                    *:Lattice*
+:Lattice            Open or focus the dashboard.          (<leader>ll)
+                                                             *:LatticeRefresh*
+:LatticeRefresh     Rescan notes and .lattice.json.       (<leader>lr)
+                                                             *:LatticeAddTodo*
+:LatticeAddTodo     Add a To Do item to the current note. (<leader>lt)
+                                                          *:LatticeAddWaiting*
+:LatticeAddWaiting  Add a Waiting On item.                (<leader>ld)
+                                                              *:LatticeHealth*
+:LatticeHealth      Same as `:checkhealth lattice`.
+
+If a default key is already mapped, Lattice keeps your mapping, warns once,
+and lists the key in |:LatticeHealth|.
+
+==============================================================================
+7. CONFIGURATION                                               *lattice-config*
+
+Optional `.lattice.json` in the notes root: >json
+    {
+      "version": 1,
+      "scan": {
+        "include": ["**/*.md"],
+        "exclude": ["Archives/**", ".git/**"]
+      },
+      "headings": { "todo": "To Do", "waiting": "Waiting On" },
+      "inbox": { "path": "Inbox" }
+    }
+<
+Globs match whole paths relative to the root. `*` stays within one segment,
+`**` spans any number of segments, and matching is case-sensitive. A
+`scan.exclude` list replaces the default. `.git` directories and symbolic
+links are always skipped. Changes apply on refresh. An invalid file shows an
+error and scans nothing.
+
+==============================================================================
+8. LIMITATIONS AND TROUBLESHOOTING                             *lattice-health*
+
+- No file watching. Refresh by hand.
+- No completion command. Edit the note to `- [x]`.
+- WBR, AI discovery, Portico publishing and Drafts import are not built.
+
+|:LatticeHealth| shows the root, config status, counts, unreadable paths,
+invalid dates with file and line, and skipped keymaps.
+
+ vim:tw=78:ts=8:ft=help:norl:
