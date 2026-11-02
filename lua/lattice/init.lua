@@ -1,135 +1,100 @@
--- Public entry point: setup, commands, keymaps, and task insertion.
+-- Public entry point: setup, commands, and keymaps.
 local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
-local parser = require("lattice.parser")
+local health = require("lattice.health")
+local insert = require("lattice.insert")
 
 local M = {}
 
 M.open = dashboard.open
 M.refresh = dashboard.refresh
+M.add_todo = insert.add_todo
+M.add_waiting = insert.add_waiting
 
-local function warn(message)
-  vim.notify("Lattice: " .. message, vim.log.levels.WARN)
+function M.health()
+  vim.cmd("checkhealth lattice")
 end
 
-local function current_markdown_buffer()
-  local buf = vim.api.nvim_get_current_buf()
-  local markdown = vim.bo[buf].filetype == "markdown" or vim.api.nvim_buf_get_name(buf):match("%.md$")
-  if dashboard.is_dashboard(buf) or vim.bo[buf].buftype ~= "" or not markdown then
-    warn("open a Markdown note to add a task")
-    return nil
-  end
-  if not vim.bo[buf].modifiable then
-    warn("this buffer is not modifiable")
-    return nil
-  end
-  return buf
+-- The global normal-mode mapping for `lhs`, ignoring buffer-local ones:
+-- maparg() prefers the current buffer's mappings, so ask from a scratch
+-- buffer that has none.
+local function global_mapping(lhs)
+  local scratch = vim.api.nvim_create_buf(false, true)
+  local found = vim.api.nvim_buf_call(scratch, function()
+    return vim.fn.maparg(lhs, "n", false, true)
+  end)
+  vim.api.nvim_buf_delete(scratch, { force = true })
+  return not vim.tbl_isempty(found) and found or nil
 end
 
-local function load_headings()
-  local root = config.options.root
-  if not root then
-    return config.defaults().headings
-  end
-  local cfg, _, err = config.load(root)
-  if not cfg then
-    vim.notify("Lattice: " .. err, vim.log.levels.ERROR)
-    return nil
-  end
-  return cfg.headings
+local function is_lattice(mapping)
+  return mapping ~= nil and (mapping.desc or ""):match("^Lattice: ") ~= nil
 end
 
---- Adds `entry` to the end of the section, creating it at the end of the note
---- if missing. Changes the buffer only; saving stays with the user.
-function M.insert(buf, kind, entry, headings)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  for _, section in ipairs(parser.parse(lines, headings).sections) do
-    if section.kind == kind then
-      vim.api.nvim_buf_set_lines(buf, section.last, section.last, false, { entry })
-      return
+-- Removes the mappings an earlier setup() created, so a reload with other
+-- keys or `keymaps = false` leaves nothing stale. Mappings the user has
+-- since replaced are left alone.
+local function clear_keymaps()
+  for _, lhs in pairs(config.active_keymaps) do
+    if is_lattice(global_mapping(lhs)) then
+      pcall(vim.keymap.del, "n", lhs)
     end
   end
-
-  local block = { "## " .. headings[kind], entry }
-  if #lines == 1 and lines[1] == "" then
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, block)
-    return
-  end
-  if vim.trim(lines[#lines]) ~= "" then
-    table.insert(block, 1, "")
-  end
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, block)
+  config.active_keymaps = {}
+  health.keymap_conflicts = {}
 end
 
-local function prompt(label, on_value)
-  vim.ui.input({ prompt = label }, function(value)
-    value = value and vim.trim(value) or ""
-    if value ~= "" then
-      on_value(value)
-    end
-  end)
-end
-
-local function insert_when_valid(buf, kind, entry)
-  if not vim.api.nvim_buf_is_valid(buf) or not vim.bo[buf].modifiable then
-    warn("the note is no longer available; task not added")
-    return
-  end
-  local headings = load_headings()
-  if headings then
-    M.insert(buf, kind, entry, headings)
-  end
-end
-
-function M.add_todo()
-  local buf = current_markdown_buffer()
-  if not buf then
-    return
-  end
-  prompt("To Do: ", function(description)
-    insert_when_valid(buf, "todo", "- [ ] " .. description)
-  end)
-end
-
-function M.add_waiting()
-  local buf = current_markdown_buffer()
-  if not buf then
-    return
-  end
-  prompt("Waiting On: ", function(description)
-    prompt("Assignee: ", function(person)
-      person = person:gsub("^@", "")
-      if not person:match("^%S+$") then
-        warn("assignee must be a single word; task not added")
-        return
-      end
-      insert_when_valid(buf, "waiting", ("- [ ] @%s %s"):format(person, description))
-    end)
-  end)
-end
-
+-- Sets each keymap unless the key already does something else, in which
+-- case it is skipped with a warning (also listed in :LatticeHealth).
+-- config.active_keymaps records what was actually mapped.
 local function set_keymaps(keymaps)
+  clear_keymaps()
   if not keymaps then
     return
   end
   local actions = {
-    { keymaps.open, M.open, "Lattice: open dashboard" },
-    { keymaps.add_todo, M.add_todo, "Lattice: add To Do" },
-    { keymaps.add_waiting, M.add_waiting, "Lattice: add Waiting On" },
-    { keymaps.refresh, M.refresh, "Lattice: refresh" },
+    { "open", M.open, "Lattice: open dashboard" },
+    { "add_todo", M.add_todo, "Lattice: add To Do" },
+    { "add_waiting", M.add_waiting, "Lattice: add Waiting On" },
+    { "refresh", M.refresh, "Lattice: refresh" },
   }
+  local skipped = {}
   for _, action in ipairs(actions) do
-    if action[1] then
-      vim.keymap.set("n", action[1], action[2], { desc = action[3] })
+    local name, lhs = action[1], keymaps[action[1]]
+    if lhs then
+      local existing = global_mapping(lhs)
+      if existing == nil or is_lattice(existing) then
+        vim.keymap.set("n", lhs, action[2], { desc = action[3] })
+        config.active_keymaps[name] = lhs
+      else
+        health.keymap_conflicts[#health.keymap_conflicts + 1] = { lhs = lhs, action = name }
+        skipped[#skipped + 1] = ("%s (%s)"):format(lhs, name)
+      end
     end
+  end
+  if #skipped > 0 then
+    vim.notify(
+      ("Lattice: kept your existing mapping for %s; set keymaps.<name> to another key or false"):format(
+        table.concat(skipped, ", ")
+      ),
+      vim.log.levels.WARN
+    )
   end
 end
 
 --- @param opts? { root: string, keymaps?: false|table<string, string|false> }
 function M.setup(opts)
   local options = config.setup(opts)
-  vim.api.nvim_create_user_command("Lattice", M.open, { desc = "Open the Lattice dashboard" })
-  vim.api.nvim_create_user_command("LatticeRefresh", M.refresh, { desc = "Rescan notes and .lattice.json" })
+  local function command(name, fn, desc)
+    vim.api.nvim_create_user_command(name, function()
+      fn()
+    end, { desc = desc })
+  end
+  command("Lattice", M.open, "Open the Lattice dashboard")
+  command("LatticeRefresh", M.refresh, "Rescan notes and .lattice.json")
+  command("LatticeHealth", M.health, "Show Lattice config and scan warnings")
+  command("LatticeAddTodo", M.add_todo, "Add a task under To Do in the current note")
+  command("LatticeAddWaiting", M.add_waiting, "Add an item under Waiting On in the current note")
   set_keymaps(options.keymaps)
 end
 

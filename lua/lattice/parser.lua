@@ -140,8 +140,11 @@ function M.parse(lines, headings)
   local list_col -- content column of the current top-level item
   local prev_paragraph, prev_blank = false, true
 
+  -- Records where the section ends: `stop` is the line before the next
+  -- heading, `last` the final non-blank line.
   local function close_section(last)
     if section then
+      section.stop = last
       while last > section.line and vim.trim(lines[last]) == "" do
         last = last - 1
       end

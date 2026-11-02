@@ -3,21 +3,27 @@ local M = {}
 
 M.filename = ".lattice.json"
 
+local DEFAULT_KEYMAPS = {
+  open = "<leader>ll",
+  add_todo = "<leader>lt",
+  add_waiting = "<leader>ld",
+  refresh = "<leader>lr",
+}
+
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
 M.options = {
   root = nil,
-  keymaps = {
-    open = "<leader>ll",
-    add_todo = "<leader>lt",
-    add_waiting = "<leader>ld",
-    refresh = "<leader>lr",
-  },
+  keymaps = vim.deepcopy(DEFAULT_KEYMAPS),
 }
+
+-- Keymaps setup() actually created, by name. Keys skipped because they
+-- were already mapped are absent.
+M.active_keymaps = {}
 
 function M.defaults()
   return {
     version = 1,
-    scan = { include = { "**/*.md" }, exclude = { "Archives/**" } },
+    scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
     headings = { todo = "To Do", waiting = "Waiting On" },
     inbox = { path = "Inbox" },
   }
@@ -31,20 +37,43 @@ function M.normalize_root(root)
   return (path:gsub("/+$", ""))
 end
 
+-- Merges user keymaps over the defaults. Unknown names and values other
+-- than a key string or false are dropped with one error message, so a typo
+-- cannot abort setup.
+local function merge_keymaps(user)
+  if user == false then
+    return false
+  end
+  local keymaps = vim.deepcopy(DEFAULT_KEYMAPS)
+  if user == nil then
+    return keymaps
+  end
+  if type(user) ~= "table" then
+    vim.notify("Lattice: keymaps must be a table or false; using the defaults", vim.log.levels.ERROR)
+    return keymaps
+  end
+  local problems = {}
+  for name, value in pairs(user) do
+    if DEFAULT_KEYMAPS[name] == nil then
+      problems[#problems + 1] = ("unknown keymaps.%s"):format(tostring(name))
+    elseif value == false or (type(value) == "string" and value ~= "") then
+      keymaps[name] = value
+    else
+      problems[#problems + 1] = ("keymaps.%s must be a key string or false, not %s"):format(name, vim.inspect(value))
+      keymaps[name] = false
+    end
+  end
+  if #problems > 0 then
+    table.sort(problems)
+    vim.notify("Lattice: " .. table.concat(problems, "; ") .. " (ignored)", vim.log.levels.ERROR)
+  end
+  return keymaps
+end
+
 function M.setup(opts)
   opts = opts or {}
   M.options.root = M.normalize_root(opts.root)
-  if opts.keymaps == false then
-    M.options.keymaps = false
-  elseif type(opts.keymaps) == "table" then
-    local keymaps = M.options.keymaps or {}
-    M.options.keymaps = vim.tbl_extend("force", {
-      open = "<leader>ll",
-      add_todo = "<leader>lt",
-      add_waiting = "<leader>ld",
-      refresh = "<leader>lr",
-    }, keymaps, opts.keymaps)
-  end
+  M.options.keymaps = merge_keymaps(opts.keymaps)
   return M.options
 end
 
@@ -136,7 +165,7 @@ end
 function M.load(root)
   local path = root .. "/" .. M.filename
   if not vim.uv.fs_stat(path) then
-    return M.defaults(), ("No %s in %s; using defaults."):format(M.filename, root)
+    return M.defaults(), ("No %s in %s; using defaults."):format(M.filename, vim.fn.fnamemodify(root, ":~"))
   end
 
   local file, open_err = io.open(path, "r")

@@ -5,13 +5,25 @@ local scanner = require("lattice.scanner")
 local M = {}
 
 local BUFFER_NAME = "lattice://dashboard"
-local MIN_WIDTH = 34
+local MIN_WIDTH = 50
 local MAX_TEXT_COLUMN = 60
+local DUE_SOON_DAYS = 7
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
-local FOOTER = "Enter: Open original note   r: Refresh   q: Close"
+local FOOTER = "Enter  Open note    r  Refresh    q  Close    ?  Help"
+
+local WINDOW_OPTIONS = {
+  number = false,
+  relativenumber = false,
+  signcolumn = "no",
+  foldcolumn = "0",
+  wrap = false,
+  list = false,
+  spell = false,
+  cursorline = true,
+}
 
 local ns = vim.api.nvim_create_namespace("lattice.dashboard")
-local state = { buf = nil, prev_buf = nil, result = nil, targets = {} }
+local state = { buf = nil, prev_buf = nil, result = nil, targets = {}, help = false }
 
 local function width(text)
   return vim.fn.strdisplaywidth(text)
@@ -21,73 +33,122 @@ local function pad(text, column)
   return text .. (" "):rep(math.max(0, column - width(text)))
 end
 
+local function to_time(iso)
+  local y, m, d = iso:match("^(%d+)-(%d+)-(%d+)$")
+  return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
+end
+
+--- The ISO date `days` after `iso`, in local calendar terms.
+function M.add_days(iso, days)
+  return os.date("%Y-%m-%d", to_time(iso) + days * 86400)
+end
+
 local function date_label(iso, today)
   local y, m, d = iso:match("^(%d+)-(%d+)-(%d+)$")
-  local label = ("%s %d"):format(MONTHS[tonumber(m)], tonumber(d))
+  local label = ("%s %s"):format(MONTHS[tonumber(m)], d)
   if y ~= today:sub(1, 4) then
     label = label .. ", " .. y
   end
   return label
 end
 
---- Open tasks in one section: dated by ascending date, then undated, both in
---- stable file-and-line order.
-function M.sorted(tasks, section)
+local WEEKDAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+
+-- English names regardless of locale, matching the row date labels.
+local function header_date(today)
+  local _, m, d = today:match("^(%d+)-(%d+)-(%d+)$")
+  local wday = os.date("*t", to_time(today)).wday
+  return ("%s %s %s"):format(WEEKDAYS[wday], MONTHS[tonumber(m)], d)
+end
+
+local function by_due_then_source(a, b)
+  if a.due ~= b.due then
+    if a.due and b.due then
+      return a.due < b.due
+    end
+    return a.due ~= nil
+  end
+  if a.rel ~= b.rel then
+    return (a.rel or "") < (b.rel or "")
+  end
+  return a.line < b.line
+end
+
+local function sort_open(tasks, keep)
   local open = vim.tbl_filter(function(task)
-    return task.section == section and not task.done
+    return not task.done and keep(task)
   end, tasks)
-  table.sort(open, function(a, b)
-    if a.due ~= b.due then
-      if a.due and b.due then
-        return a.due < b.due
-      end
-      return a.due ~= nil
-    end
-    if a.rel ~= b.rel then
-      return a.rel < b.rel
-    end
-    return a.line < b.line
-  end)
+  table.sort(open, by_due_then_source)
   return open
 end
 
-local function build_rows(tasks, today)
-  local name_col, text_col = 0, 0
+--- Open tasks in one section: dated by ascending date, then undated, both in
+--- stable file-and-line order.
+function M.sorted(tasks, section)
+  return sort_open(tasks, function(task)
+    return task.section == section
+  end)
+end
+
+--- Open tasks due before today, oldest first.
+function M.overdue(tasks, today)
+  return sort_open(tasks, function(task)
+    return task.due ~= nil and task.due < today
+  end)
+end
+
+--- Open tasks due from today through the next 7 days, soonest first.
+function M.due_soon(tasks, today)
+  local last = M.add_days(today, DUE_SOON_DAYS)
+  return sort_open(tasks, function(task)
+    return task.due ~= nil and task.due >= today and task.due <= last
+  end)
+end
+
+local function task_label(task)
+  local text = task.text ~= "" and task.text or "(no description)"
+  if task.section == "waiting" then
+    return (task.person or "Unassigned") .. " — " .. text, #(task.person or "Unassigned")
+  end
+  return text, 0
+end
+
+-- Width of the widest task label, capped, so dates line up across groups.
+local function label_column(tasks)
+  local column = 0
+  for _, task in ipairs(tasks) do
+    column = math.max(column, width((task_label(task))))
+  end
+  return math.min(column, MAX_TEXT_COLUMN)
+end
+
+-- Builds one row per task: `mark` prefix, label, then dates in a column.
+local function build_rows(tasks, today, mark, mark_hl, text_col)
   local rows = {}
   for _, task in ipairs(tasks) do
-    local row = { task = task, text = task.text ~= "" and task.text or "(no description)" }
-    if task.section == "waiting" then
-      row.name = task.person or "Unassigned"
-      name_col = math.max(name_col, width(row.name))
-    end
-    text_col = math.max(text_col, width(row.text))
-    rows[#rows + 1] = row
+    local label, name_len = task_label(task)
+    rows[#rows + 1] = { task = task, label = label, name_len = name_len }
   end
-  text_col = math.min(text_col, MAX_TEXT_COLUMN)
 
+  local prefix = "  " .. mark .. " "
   for _, row in ipairs(rows) do
-    local line = "  "
-    local parts = {}
-    if row.name then
-      parts[#parts + 1] = { col = #line, len = #row.name, hl = "Identifier" }
-      line = line .. pad(row.name, name_col) .. "  "
+    local task = row.task
+    local parts = { { col = 2, len = #mark, hl = mark_hl } }
+    if row.name_len > 0 then
+      parts[#parts + 1] = { col = #prefix, len = row.name_len, hl = "Identifier" }
     end
-    line = line .. row.text
-    local due, promised = row.task.due, row.task.promised
-    if due or promised then
-      line = pad(line, 2 + (row.name and name_col + 2 or 0) + text_col) .. "  "
+    local line = prefix .. row.label
+    if task.due or task.promised then
+      -- "  [ ] " is the widest prefix; dates line up after it in every group.
+      line = pad(line, 6 + text_col) .. "    "
     end
-    if due then
-      local label = date_label(due, today)
-      local overdue = due < today
-      if overdue then
-        label = label .. "  overdue"
-      end
-      parts[#parts + 1] = { col = #line, len = #label, hl = overdue and "DiagnosticError" or "Comment" }
-      line = line .. label .. (promised and "  " or "")
+    if task.due then
+      local label = date_label(task.due, today)
+      parts[#parts + 1] = { col = #line, len = #label, hl = task.due < today and "DiagnosticError" or "Comment" }
+      line = line .. label .. (task.promised and "  " or "")
     end
-    if promised then
-      local label = "promised " .. date_label(promised, today)
+    if task.promised then
+      local label = "promised " .. date_label(task.promised, today)
       parts[#parts + 1] = { col = #line, len = #label, hl = "Comment" }
       line = line .. label
     end
@@ -104,7 +165,7 @@ local function build_inbox_rows(captures, today)
   title_col = math.min(title_col, MAX_TEXT_COLUMN)
 
   return vim.tbl_map(function(capture)
-    local line = pad("  " .. capture.title, 2 + title_col) .. "  "
+    local line = pad("  " .. capture.title, 2 + title_col) .. "    "
     local label = date_label(capture.date, today)
     return {
       task = { path = capture.path, line = 1 },
@@ -114,10 +175,48 @@ local function build_inbox_rows(captures, today)
   end, captures)
 end
 
+local function help_lines(keymaps)
+  local lines = {
+    "KEYS",
+    "  Enter   Open the note at the task's line",
+    "  r       Rescan notes and reread .lattice.json",
+    "  q       Close the dashboard",
+    "  ?       Toggle this help",
+    "",
+    "COMMANDS",
+    "  :Lattice            Open the dashboard",
+    "  :LatticeRefresh     Rescan notes and reread .lattice.json",
+    "  :LatticeHealth      Show config, unreadable files, invalid dates",
+    "  :LatticeAddTodo     Add a task under To Do in the current note",
+    "  :LatticeAddWaiting  Add an item under Waiting On in the current note",
+  }
+  if keymaps then
+    local mapped = {}
+    for _, item in ipairs({
+      { "open", "dashboard" },
+      { "refresh", "refresh" },
+      { "add_todo", "add To Do" },
+      { "add_waiting", "add Waiting On" },
+    }) do
+      if keymaps[item[1]] then
+        mapped[#mapped + 1] = ("%s %s"):format(keymaps[item[1]], item[2])
+      end
+    end
+    if #mapped > 0 then
+      lines[#lines + 1] = "  Keymaps: " .. table.concat(mapped, ", ")
+    end
+  end
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "Lattice reads saved files: save a note, then refresh."
+  return lines
+end
+
 --- @param result table  output of scanner.collect
 --- @param today string  YYYY-MM-DD
+--- @param opts? { help: boolean, keymaps: table|false }  keymaps: the ones actually mapped
 --- @return { lines: string[], highlights: table[], targets: table<integer, table> }
-function M.render(result, today)
+function M.render(result, today, opts)
+  opts = opts or {}
   local lines, highlights, targets = {}, {}, {}
 
   local function add(line, group)
@@ -128,10 +227,21 @@ function M.render(result, today)
   end
 
   local groups = {}
+  local open_count = 0
   if not result.error then
-    for _, group in ipairs({ { "MY TO DO", "todo" }, { "WAITING ON", "waiting" } }) do
-      groups[#groups + 1] = { title = group[1], rows = build_rows(M.sorted(result.tasks, group[2]), today) }
-    end
+    local todo, waiting = M.sorted(result.tasks, "todo"), M.sorted(result.tasks, "waiting")
+    open_count = #todo + #waiting
+    local col = label_column(vim.list_extend(vim.list_extend({}, todo), waiting))
+    groups = {
+      { title = "MY TO DO", rows = build_rows(todo, today, "[ ]", "Comment", col) },
+      { title = "WAITING ON", rows = build_rows(waiting, today, "[ ]", "Comment", col) },
+      { title = "OVERDUE", rows = build_rows(M.overdue(result.tasks, today), today, "! ", "DiagnosticError", col) },
+      {
+        title = "DUE SOON",
+        note = "[within next 7 days; excludes overdue]",
+        rows = build_rows(M.due_soon(result.tasks, today), today, "· ", "DiagnosticWarn", col),
+      },
+    }
     if result.inbox then
       groups[#groups + 1] = { title = "INBOX", rows = build_inbox_rows(result.inbox, today) }
     end
@@ -144,8 +254,24 @@ function M.render(result, today)
     end
   end
 
-  add("LATTICE", "Title")
+  local date = header_date(today)
+  add(pad("LATTICE", rule_width - width(date)) .. date, "Title")
+  add("My management workspace — local notes", "Comment")
+  if result.root then
+    local where = vim.fn.fnamemodify(result.root, ":~")
+    if result.files then
+      where = ("%s  (%d note%s)"):format(where, result.files, result.files == 1 and "" or "s")
+    end
+    add(where, "Comment")
+  end
   add(("─"):rep(rule_width), "Comment")
+
+  if opts.help then
+    for _, line in ipairs(help_lines(opts.keymaps)) do
+      add(line, line:match("^%u+$") and "Title" or nil)
+    end
+    add(("─"):rep(rule_width), "Comment")
+  end
 
   if result.error then
     add("ERROR", "DiagnosticError")
@@ -153,11 +279,21 @@ function M.render(result, today)
       add("  " .. line)
     end
     add("")
+  elseif open_count == 0 then
+    local headings = result.headings or config.defaults().headings
+    add("No open tasks found.", "Title")
+    add("  Lattice lists top-level bullets under headings named exactly")
+    add('  "' .. headings.todo .. '" or "' .. headings.waiting .. '" in the scanned notes.')
+    add("")
   end
 
   for _, group in ipairs(groups) do
-    local count = ("(%d)"):format(#group.rows)
-    add(pad(group.title, rule_width - #count) .. count, "Title")
+    local title = ("%s (%d)"):format(group.title, #group.rows)
+    add(title, "Title")
+    if group.note then
+      lines[#lines] = title .. "  " .. group.note
+      highlights[#highlights + 1] = { line = #lines - 1, col = #title, len = #group.note + 2, hl = "Comment" }
+    end
     if #group.rows == 0 then
       add("  (none)", "Comment")
     end
@@ -171,28 +307,26 @@ function M.render(result, today)
     add("")
   end
 
-  local has_notices = result.notice or #result.unreadable > 0 or #result.date_errors > 0
-  if has_notices then
-    add("NOTICES", "DiagnosticWarn")
-    if result.notice then
-      add("  " .. result.notice)
+  if result.notice then
+    add(result.notice, "DiagnosticWarn")
+  end
+  local unreadable, date_errors = result.unreadable or {}, result.date_errors or {}
+  local warnings = #unreadable + #date_errors
+  if warnings > 0 then
+    local title = ("WARNINGS (%d)"):format(warnings)
+    local note = "Enter opens a date; :LatticeHealth for details"
+    add(title .. "  " .. note, "DiagnosticWarn")
+    for _, item in ipairs(unreadable) do
+      add(("  Could not read %s: %s"):format(item.path, item.message))
     end
-    if #result.unreadable > 0 then
-      add(("  Could not read %d path(s):"):format(#result.unreadable))
-      for _, item in ipairs(result.unreadable) do
-        add(("    %s: %s"):format(item.path, item.message))
-      end
-    end
-    if #result.date_errors > 0 then
-      add(("  Invalid dates, ignored (%d):"):format(#result.date_errors))
-      for _, item in ipairs(result.date_errors) do
-        add(("    %s:%d [%s:%s]"):format(item.rel, item.line, item.tag, item.value))
-        targets[#lines] = { path = item.path, line = item.line }
-      end
+    for _, item in ipairs(date_errors) do
+      add(("  Invalid date, shown undated: %s:%d [%s:%s]"):format(item.rel, item.line, item.tag, item.value))
+      targets[#lines] = { path = item.path, line = item.line }
     end
     add("")
   end
 
+  add(("─"):rep(rule_width), "Comment")
   add(FOOTER, "Comment")
   return { lines = lines, highlights = highlights, targets = targets }
 end
@@ -202,7 +336,10 @@ local function buffer_ready()
 end
 
 local function paint()
-  local view = M.render(state.result, os.date("%Y-%m-%d"))
+  local view = M.render(state.result, os.date("%Y-%m-%d"), {
+    help = state.help,
+    keymaps = config.active_keymaps,
+  })
   local buf = state.buf
   state.targets = view.targets
 
@@ -241,7 +378,7 @@ local function report()
   end
   local problems = #result.unreadable + #result.date_errors
   if problems > 0 then
-    summary = ("%s; %d notice(s), see dashboard"):format(summary, problems)
+    summary = ("%s; %d warning(s), see :LatticeHealth"):format(summary, problems)
   end
   vim.notify(summary, problems > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
 end
@@ -259,6 +396,14 @@ function M.is_dashboard(buf)
   return buf == state.buf
 end
 
+function M.toggle_help()
+  if not buffer_ready() then
+    return
+  end
+  state.help = not state.help
+  paint()
+end
+
 function M.jump()
   local target = state.targets[vim.api.nvim_win_get_cursor(0)[1]]
   if not target then
@@ -268,6 +413,8 @@ function M.jump()
     vim.notify("Lattice: " .. target.path .. " no longer exists; press r to refresh", vim.log.levels.WARN)
     return
   end
+  -- :edit switches to an already-loaded buffer without reloading it, so
+  -- unsaved changes in the note are kept.
   local ok, err = pcall(vim.cmd.edit, vim.fn.fnameescape(target.path))
   if not ok then
     vim.notify("Lattice: " .. tostring(err), vim.log.levels.ERROR)
@@ -288,7 +435,7 @@ function M.close()
       vim.api.nvim_win_set_buf(win, prev)
     end
   end
-  state.buf, state.prev_buf, state.result, state.targets = nil, nil, nil, {}
+  state.buf, state.prev_buf, state.result, state.targets, state.help = nil, nil, nil, {}, false
   vim.api.nvim_buf_delete(buf, { force = true })
 end
 
@@ -310,6 +457,18 @@ local function create_buffer()
   map("<CR>", M.jump, "Lattice: open original note")
   map("r", M.refresh, "Lattice: refresh")
   map("q", M.close, "Lattice: close")
+  map("?", M.toggle_help, "Lattice: toggle help")
+
+  -- A plain, unwrapped view in whichever window shows the dashboard.
+  vim.api.nvim_create_autocmd("BufWinEnter", {
+    buffer = buf,
+    callback = function()
+      local win = vim.api.nvim_get_current_win()
+      for option, value in pairs(WINDOW_OPTIONS) do
+        vim.api.nvim_set_option_value(option, value, { scope = "local", win = win })
+      end
+    end,
+  })
   return buf
 end
 

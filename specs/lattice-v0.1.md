@@ -1,6 +1,6 @@
 # Lattice v0.1 — Implementation Specification
 
-Status: Agreed initial design; implementation not started
+Status: Superseded by LATTICE_SPEC.md (2026-11-02) where the two differ; kept for history
 Date: 2026-11-01
 Project: Lattice (independent of Portico)
 
