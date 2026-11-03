@@ -42,9 +42,10 @@ Without a plugin manager: >lua
 setup({opts})
     {root}     (string, required) Notes root. Lattice never guesses it.
     {keymaps}  (table|false) Keys for `open`, `refresh`, `add_todo`,
-               `add_waiting`. Each may be a key string or false. Set
-               `keymaps = false` to create none. Defaults: `<leader>ll`,
-               `<leader>lr`, `<leader>lt`, `<leader>ld`.
+               `add_waiting`, `next_state`, `prev_state`. Each may be a
+               key string or false. Set `keymaps = false` to create none.
+               Defaults: `<leader>ll`, `<leader>lr`, `<leader>lt`,
+               `<leader>ld`, `<leader>ln`, `<leader>lp`.
 
 ==============================================================================
 3. NOTE FORMAT                                                 *lattice-format*
@@ -129,6 +130,22 @@ an optional one-word name, then text, and adds `- [ ] @Name <text>` under
   saved for you.
 - If an item lands inside a code block, Lattice warns that it can't list it.
 
+                                                               *lattice-cycle*
+|:LatticeNextState| and |:LatticePrevState| step the item under the cursor
+through its keyword sequence, like org's S-Right and S-Left. With
+`TODO NEXT | DONE CANCELED` the forward cycle is: no keyword, TODO, NEXT,
+DONE, CANCELED, no keyword.
+
+- Works on bullets (`-`, `*`, `+`, with or without a checkbox) and `#`
+  headings. The keyword goes after the marker and checkbox; the checkbox is
+  left alone.
+- Uses the note's sequences (front matter, else root). An item stays in the
+  sequence that holds its keyword; one without a keyword starts on the
+  first sequence.
+- Plain lines, numbered items, empty bullets, front matter and code blocks
+  are refused with a message, and nothing changes.
+- One undo step. The buffer is not saved.
+
 ==============================================================================
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
 
@@ -140,6 +157,10 @@ an optional one-word name, then text, and adds `- [ ] @Name <text>` under
 :LatticeAddTodo     Add a TODO item below the cursor.     (<leader>lt)
                                                           *:LatticeAddWaiting*
 :LatticeAddWaiting  Add a Waiting On item.                (<leader>ld)
+                                                           *:LatticeNextState*
+:LatticeNextState   Next state of the item under cursor.  (<leader>ln)
+                                                           *:LatticePrevState*
+:LatticePrevState   Previous state of the item.           (<leader>lp)
                                                               *:LatticeHealth*
 :LatticeHealth      Same as `:checkhealth lattice`.
 

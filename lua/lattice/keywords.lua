@@ -50,7 +50,7 @@ end
 
 --- Builds the keyword table from one or more sequence strings.
 --- @param sequences string|string[]
---- @return { states: table<string, "open"|"done">, first_open: string|nil, sequences: string[] }|nil
+--- @return { states: table<string, "open"|"done">, first_open: string|nil, sequences: string[], cycles: string[][] }|nil
 --- @return string|nil err
 function M.build(sequences)
   if type(sequences) == "string" then
@@ -59,7 +59,9 @@ function M.build(sequences)
   if type(sequences) ~= "table" or #sequences == 0 then
     return nil, "expected a sequence string or a list of them"
   end
-  local result = { states = {}, sequences = {} }
+  -- cycles: each sequence's keywords in order (open, then done), for
+  -- stepping an item through its states.
+  local result = { states = {}, sequences = {}, cycles = {} }
   for _, text in ipairs(sequences) do
     local sequence, err = M.parse_sequence(text)
     if not sequence then
@@ -75,6 +77,13 @@ function M.build(sequences)
     end
     result.first_open = result.first_open or sequence.open[1]
     result.sequences[#result.sequences + 1] = text
+    local cycle = {}
+    for _, list in ipairs({ sequence.open, sequence.done }) do
+      for _, keyword in ipairs(list) do
+        cycle[#cycle + 1] = keyword
+      end
+    end
+    result.cycles[#result.cycles + 1] = cycle
   end
   return result
 end

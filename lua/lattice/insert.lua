@@ -10,11 +10,11 @@ local function warn(message)
   vim.notify("Lattice: " .. message, vim.log.levels.WARN)
 end
 
-local function current_markdown_buffer()
+local function current_markdown_buffer(purpose)
   local buf = vim.api.nvim_get_current_buf()
   local markdown = vim.bo[buf].filetype == "markdown" or vim.api.nvim_buf_get_name(buf):match("%.md$")
   if dashboard.is_dashboard(buf) or vim.bo[buf].buftype ~= "" or not markdown then
-    warn("open a Markdown note to add a task")
+    warn("open a Markdown note to " .. (purpose or "add a task"))
     return nil
   end
   if not vim.bo[buf].modifiable then
@@ -153,6 +153,124 @@ function M.insert_todo(buf, text, cfg, cursor)
   end
   vim.api.nvim_buf_set_lines(buf, after, after, false, { entry })
   return after + 1
+end
+
+-- The state after `current` (nil = no keyword) in `direction` (1 forward,
+-- -1 back). Like org: an item steps through the sequence that holds its
+-- keyword, then back to no keyword; an item without one starts on the
+-- first sequence.
+local function step(cycles, current, direction)
+  local cycle = cycles[1]
+  local index = 0
+  for _, candidate in ipairs(cycles) do
+    for i, keyword in ipairs(candidate) do
+      if keyword == current then
+        cycle, index = candidate, i
+        break
+      end
+    end
+    if index > 0 then
+      break
+    end
+  end
+  if index == 0 then
+    index = direction > 0 and 0 or #cycle + 1
+  end
+  return cycle[index + direction] -- nil past either end: no keyword
+end
+
+--- Splits a list item or ATX heading into its prefix (marker and any
+--- checkbox, or the hashes) and the text after it. nil for other lines.
+local function item_parts(line)
+  local prefix, text = line:match("^([ \t]*[-*+][ \t]+%[[ xX]%][ \t]+)(.*)$")
+  if not prefix then
+    prefix, text = line:match("^([ \t]*[-*+][ \t]+)(.*)$")
+  end
+  if not prefix then
+    prefix, text = line:match("^( ? ? ?#+[ \t]+)(.*)$")
+    if prefix and #prefix:match("#+") > 6 then
+      prefix = nil
+    end
+  end
+  return prefix, text
+end
+
+--- The line with its keyword moved one state in `direction` (1 forward, -1
+--- back), using the note's keyword table. Returns the new line, the 0-based
+--- start and end columns of the replaced span, the new state (nil when the
+--- keyword was removed) and the text that replaces the span; or nil and an
+--- error.
+function M.cycle_line(line, kws, direction)
+  local prefix, text = item_parts(line)
+  if not prefix then
+    return nil, "put the cursor on a list item (- …) or a heading (# …)"
+  end
+  local word, gap = text:match("^(%S+)([ \t]*)")
+  local current = word and kws.states[word] and word or nil
+  local old = current and current .. gap or ""
+  local rest = text:sub(#old + 1)
+  local state = step(kws.cycles, current, direction)
+  if state and rest:match("^%s*$") then
+    return nil, "this item has no text; type the task first"
+  end
+  local new = state and state .. " " or ""
+  return prefix .. new .. rest, #prefix, #prefix + #old, state, new
+end
+
+--- Moves the keyword of the item on `row` (1-based) one state in
+--- `direction`. Edits only that span of the line, so the change is one undo
+--- step. Refuses, changing nothing, when Lattice would not list the result
+--- (for example inside a code block). Returns the new state ("" for none),
+--- or nil and an error.
+function M.cycle(buf, row, cfg, direction)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local _, _, front_end = keywords.front_matter(lines)
+  if row <= front_end then
+    return nil, "the cursor is in the front matter; put it on a list item or heading"
+  end
+  local kws = parser.parse(lines, cfg).keywords
+  if #kws.cycles == 0 then
+    return nil, "this note has no keyword sequences"
+  end
+  local new_line, start, stop, state, inserted = M.cycle_line(lines[row], kws, direction)
+  if not new_line then
+    return nil, start
+  end
+  if state then
+    lines[row] = new_line
+    local listed = false
+    for _, task in ipairs(parser.parse(lines, cfg).tasks) do
+      listed = listed or task.line == row
+    end
+    if not listed then
+      return nil, "Lattice wouldn't list this line as an item: it is inside a code block or indented as code"
+    end
+  end
+  vim.api.nvim_buf_set_text(buf, row - 1, start, row - 1, stop, { inserted })
+  return state or ""
+end
+
+local function cycle_command(direction)
+  local buf = current_markdown_buffer("change a task's state")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local _, err = M.cycle(buf, vim.api.nvim_win_get_cursor(0)[1], cfg, direction)
+  if err then
+    warn(err)
+  end
+end
+
+function M.next_state()
+  cycle_command(1)
+end
+
+function M.prev_state()
+  cycle_command(-1)
 end
 
 local function usable(buf)
