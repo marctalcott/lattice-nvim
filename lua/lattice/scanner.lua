@@ -127,21 +127,34 @@ end
 
 function M.scan(root, cfg)
   local files, unreadable = M.list_files(root, cfg.scan)
-  local result = { tasks = {}, date_errors = {}, unreadable = unreadable, files = #files }
+  local result = { tasks = {}, date_errors = {}, warnings = {}, unreadable = unreadable, files = #files }
   result.inbox = M.list_inbox(root, cfg.inbox.path, unreadable)
 
   for _, rel in ipairs(files) do
     local path = root .. "/" .. rel
     local lines, err = read_lines(path)
     if lines then
-      local parsed = parser.parse(lines, cfg.headings)
+      local parsed = parser.parse(lines, cfg)
+      -- The modified time only orders the DONE group, so stat just the
+      -- notes that have done-state items.
+      local mtime
       for _, task in ipairs(parsed.tasks) do
-        task.rel, task.path = rel, path
+        if task.done and task.state and not mtime then
+          local stat = vim.uv.fs_stat(path)
+          mtime = stat and stat.mtime.sec or 0
+        end
+      end
+      for _, task in ipairs(parsed.tasks) do
+        task.rel, task.path, task.mtime = rel, path, mtime
         result.tasks[#result.tasks + 1] = task
       end
       for _, bad in ipairs(parsed.date_errors) do
         bad.rel, bad.path = rel, path
         result.date_errors[#result.date_errors + 1] = bad
+      end
+      for _, warning in ipairs(parsed.warnings) do
+        warning.rel, warning.path = rel, path
+        result.warnings[#result.warnings + 1] = warning
       end
     else
       unreadable[#unreadable + 1] = { path = rel, message = tostring(err) }
@@ -157,13 +170,14 @@ function M.collect(root)
     return {
       tasks = {},
       date_errors = {},
+      warnings = {},
       unreadable = {},
       error = 'Notes root is not set.\nAdd it to your plugin config: require("lattice").setup({ root = "~/notes" })',
     }
   end
 
   local function failed(message)
-    return { root = root, tasks = {}, date_errors = {}, unreadable = {}, error = message }
+    return { root = root, tasks = {}, date_errors = {}, warnings = {}, unreadable = {}, error = message }
   end
 
   local stat = vim.uv.fs_stat(root)
@@ -177,7 +191,7 @@ function M.collect(root)
   end
 
   local result = M.scan(root, cfg)
-  result.root, result.notice, result.headings = root, notice, cfg.headings
+  result.root, result.notice, result.headings, result.keywords = root, notice, cfg.headings, cfg.keywords
   return result
 end
 

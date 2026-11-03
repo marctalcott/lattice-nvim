@@ -54,7 +54,7 @@ local function set_keymaps(keymaps)
   end
   local actions = {
     { "open", M.open, "Lattice: open dashboard" },
-    { "add_todo", M.add_todo, "Lattice: add To Do" },
+    { "add_todo", M.add_todo, "Lattice: add TODO" },
     { "add_waiting", M.add_waiting, "Lattice: add Waiting On" },
     { "refresh", M.refresh, "Lattice: refresh" },
   }
@@ -93,7 +93,7 @@ function M.setup(opts)
   command("Lattice", M.open, "Open the Lattice dashboard")
   command("LatticeRefresh", M.refresh, "Rescan notes and .lattice.json")
   command("LatticeHealth", M.health, "Show Lattice config and scan warnings")
-  command("LatticeAddTodo", M.add_todo, "Add a task under To Do in the current note")
+  command("LatticeAddTodo", M.add_todo, "Add a TODO item below the cursor")
   command("LatticeAddWaiting", M.add_waiting, "Add an item under Waiting On in the current note")
   set_keymaps(options.keymaps)
 end

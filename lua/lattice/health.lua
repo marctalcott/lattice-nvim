@@ -51,6 +51,12 @@ function M.report(result)
     ))
   end
 
+  for _, item in ipairs(result.warnings or {}) do
+    add("warn", ("%s line %d: %s"):format(item.rel, item.line, item.message))
+  end
+
+  add("info", "Keyword sequences (root): " .. table.concat(result.keywords.sequences, "; "))
+
   for _, conflict in ipairs(M.keymap_conflicts) do
     add("warn", ("Keymap %s (%s) not set: the key was already mapped"):format(conflict.lhs, conflict.action))
   end

@@ -6,7 +6,18 @@
 - Target: macOS + Neovim/LazyVim. Written primarily in Lua.
 - Product owner: The repository owner.
 
-> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The capture inbox and `[promised:...]` decisions recorded in `product-vision.md` (2026-11-01) remain in effect.
+> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The capture inbox and `[promised:...]` decisions recorded in `product-vision.md` (2026-11-01) remain in effect. **Amendment A (below) replaces the `To Do` heading convention with org-mode style TODO keywords.**
+
+## Amendment A — Org-style TODO keywords (2026-11-02, requested by the product owner)
+
+Replaces every rule about the `To Do` heading in §4, §5 (`headings.todo`) and §7 (`<leader>lt`). `Waiting On` sections are unchanged.
+
+1. A bullet (`-`, `*`, `+`) at any nesting depth, or an ATX heading, whose first word is a declared keyword followed by a title is a task: `- TODO Send update`, `## NEXT Draft plan`. Tasks are no longer tied to a section. A keyword with no title, ordered items, prose, code blocks and front matter are never tasks.
+2. Keywords come from org-mode style sequences, such as `TODO NEXT | DONE CANCELED`. Words before `|` are open states and words after it are done states; without `|`, the last word is the done state. Fast-access suffixes such as `TODO(t)` are ignored. Keywords match exactly (case-sensitive), as in org: `todo`, `To Do` and `to-do` are not keywords.
+3. Root sequences come from `todo` in `.lattice.json` (a string or a list; default `["TODO | DONE"]`). A note's YAML front matter `todo:` key (a string, a block list or a flow list) replaces them for that note, like org's per-file `#+TODO:`. Front matter must start the note with a `key:` line and contain only YAML-shaped lines, so a note opening with a horizontal rule is unaffected. An invalid per-note value falls back to the root sequences with a warning. An invalid root value is a config error.
+4. Open-state keyword items appear in MY TO DO, or in WAITING ON when inside a `Waiting On` section, with the state shown on each row. Done-state items, and keyword items checked `[x]`, appear in a DONE group: the 20 most recent, newest note first, with a count of the rest. `Waiting On` bullets without a keyword keep the `[ ]` / `[x]` rules, and checked ones stay hidden.
+5. `<leader>lt` inserts `- <first open keyword> <text>` below the cursor (after the front matter if the cursor is in it; on a list item, at its indent and after its sub-bullets). Inside a `Waiting On` section the inserted item is a waiting item, by rule 4. No heading is created or confirmed.
+6. `headings.todo` in an older `.lattice.json` is ignored with a notice.
 
 ## 1. Executive summary
 
@@ -52,7 +63,7 @@ Definition of done for Milestone 1: An installable, documented Lua plugin that p
 
 ## 4. Markdown conventions (strict)
 
-Recognize ATX headings of any depth (`#` through `######`) with exactly the case-sensitive text `To Do` or `Waiting On` after trimming heading-edge whitespace. Multiple sections of either type may appear in the same file. Do not match `TODO`, `To do`, `To-Do`, `Waiting For`, or any similar phrase. Text inside fenced code blocks is not parsed. A recognized task section ends at the next Markdown heading of any level (intentionally simple and deterministic).
+*(For `To Do`, superseded by Amendment A.)* Recognize ATX headings of any depth (`#` through `######`) with exactly the case-sensitive text `To Do` or `Waiting On` after trimming heading-edge whitespace. Multiple sections of either type may appear in the same file. Do not match `TODO`, `To do`, `To-Do`, `Waiting For`, or any similar phrase. Text inside fenced code blocks is not parsed. A recognized task section ends at the next Markdown heading of any level (intentionally simple and deterministic).
 
 Example:
 
@@ -190,7 +201,7 @@ Implement commands or Lua functions which insert Markdown into the current real 
 
 | Suggested key | Action            | Exact requirement                                                                                                              |
 |---------------|-------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `<leader>lt`  | Add personal task | Prompt for task text and insert `- [ ] <task>` under `To Do` in the current note.                                              |
+| `<leader>lt`  | Add personal task | Prompt for task text and insert `- [ ] <task>` under `To Do` in the current note. *(Superseded by Amendment A: inserts `- TODO <task>` below the cursor.)* |
 | `<leader>ld`  | Add waiting item  | Prompt for assignee (optional) and task text, then insert `- [ ] @Person <task>` under `Waiting On` (or no name if omitted).   |
 | `<leader>ll`  | Open dashboard    | Equivalent to `:Lattice`.                                                                                                      |
 | `<leader>lr`  | Refresh           | Equivalent to `:LatticeRefresh`.                                                                                               |

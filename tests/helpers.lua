@@ -28,7 +28,7 @@ local function eq(actual, expected)
 end
 
 local config, dashboard, parser = H.config, H.dashboard, H.parser
-local HEADINGS = config.defaults().headings
+local HEADINGS = config.defaults()
 
 local function parse(text)
   return parser.parse(vim.split(text, "\n", { plain = true }), HEADINGS)
