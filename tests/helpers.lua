@@ -7,6 +7,7 @@ H.lattice = require("lattice")
 H.parser = require("lattice.parser")
 H.scanner = require("lattice.scanner")
 H.insert = require("lattice.insert")
+H.keywords = require("lattice.keywords")
 H.health = require("lattice.health")
 
 H.passed, H.failed = 0, 0

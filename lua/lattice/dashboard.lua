@@ -235,6 +235,8 @@ local function help_lines(keymaps)
     "  :LatticeHealth      Show config, unreadable files, invalid dates",
     "  :LatticeAddTodo     Add a TODO item below the cursor",
     "  :LatticeAddWaiting  Add an item under Waiting On in the current note",
+    "  :LatticeNextState   Move the item under the cursor to its next state",
+    "  :LatticePrevState   Move the item under the cursor to its previous state",
   }
   if keymaps then
     local mapped = {}
@@ -243,6 +245,8 @@ local function help_lines(keymaps)
       { "refresh", "refresh" },
       { "add_todo", "add TODO" },
       { "add_waiting", "add Waiting On" },
+      { "next_state", "next state" },
+      { "prev_state", "previous state" },
     }) do
       if keymaps[item[1]] then
         mapped[#mapped + 1] = ("%s %s"):format(keymaps[item[1]], item[2])

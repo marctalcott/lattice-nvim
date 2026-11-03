@@ -10,6 +10,8 @@ M.open = dashboard.open
 M.refresh = dashboard.refresh
 M.add_todo = insert.add_todo
 M.add_waiting = insert.add_waiting
+M.next_state = insert.next_state
+M.prev_state = insert.prev_state
 
 function M.health()
   vim.cmd("checkhealth lattice")
@@ -57,6 +59,8 @@ local function set_keymaps(keymaps)
     { "add_todo", M.add_todo, "Lattice: add TODO" },
     { "add_waiting", M.add_waiting, "Lattice: add Waiting On" },
     { "refresh", M.refresh, "Lattice: refresh" },
+    { "next_state", M.next_state, "Lattice: next TODO state" },
+    { "prev_state", M.prev_state, "Lattice: previous TODO state" },
   }
   local skipped = {}
   for _, action in ipairs(actions) do
@@ -95,6 +99,8 @@ function M.setup(opts)
   command("LatticeHealth", M.health, "Show Lattice config and scan warnings")
   command("LatticeAddTodo", M.add_todo, "Add a TODO item below the cursor")
   command("LatticeAddWaiting", M.add_waiting, "Add an item under Waiting On in the current note")
+  command("LatticeNextState", M.next_state, "Move the item under the cursor to its next TODO state")
+  command("LatticePrevState", M.prev_state, "Move the item under the cursor to its previous TODO state")
   set_keymaps(options.keymaps)
 end
 

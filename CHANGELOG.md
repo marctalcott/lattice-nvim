@@ -2,7 +2,14 @@
 
 Lattice is not released yet. This log tracks the work toward Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md).
 
-## Unreleased — Org-style TODO keywords
+## Unreleased — Cycling TODO states
+
+### Added
+
+- `<leader>ln` / `:LatticeNextState` and `<leader>lp` / `:LatticePrevState` step the item under the cursor through its keyword sequence, like org-mode's `S-Right` / `S-Left`: no keyword → `TODO` → … → last done state → no keyword. They work on bullets and headings, use the note's own sequences, stay within the sequence that holds the item's keyword, and refuse lines Lattice wouldn't list (plain lines, numbered items, empty bullets, front matter, code blocks).
+- New keymap names `next_state` and `prev_state`.
+
+## Org-style TODO keywords (#2)
 
 ### Changed (breaking)
 
@@ -62,7 +69,7 @@ Lattice is not released yet. This log tracks the work toward Milestone 1 of [`sp
 ### Deferred (not implemented)
 
 - File watching or background indexing; refresh is manual.
-- A completion command (mark `[x]` by editing).
+- A command that ticks `[x]` checkboxes. Cycle to a done keyword with `<leader>ln`, or edit the box by hand.
 - Following symlinks that stay inside the root. All symlinks are skipped, which is the simpler safe choice.
 - Multi-word assignees.
 - WBR preparation, AI-assisted commitment discovery, Portico publishing, automated Drafts import (Milestones 3–6).

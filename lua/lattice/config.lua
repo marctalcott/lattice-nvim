@@ -10,6 +10,8 @@ local DEFAULT_KEYMAPS = {
   add_todo = "<leader>lt",
   add_waiting = "<leader>ld",
   refresh = "<leader>lr",
+  next_state = "<leader>ln",
+  prev_state = "<leader>lp",
 }
 
 -- Options passed to setup(). `root` has no default: it must be set explicitly.

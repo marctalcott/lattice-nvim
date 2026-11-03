@@ -177,6 +177,21 @@ Run these from a Markdown note. They edit only that buffer and never save it.
   - If the note has no `Waiting On` section, Lattice asks before adding `## Waiting On` at the end. Answer No, or cancel any prompt with `Esc`, and the buffer stays exactly as it was.
 - If a new item lands inside a code block, for example one that is never closed, Lattice can't list it and warns you.
 
+## Changing an item's state
+
+Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<leader>lp` (`:LatticePrevState`) step the item under the cursor through its keyword sequence. With `TODO NEXT | DONE CANCELED`:
+
+```
+- Write docs  →  - TODO Write docs  →  - NEXT Write docs  →  - DONE Write docs  →  - CANCELED Write docs  →  - Write docs
+```
+
+`<leader>lp` goes the other way. The details:
+
+- It works on bullets (`-`, `*`, `+`, with or without a checkbox) and `#` headings. The keyword goes after the marker and any checkbox: `- [ ] TODO Write docs`. The checkbox itself is left alone.
+- It uses the note's sequences: its front matter `todo:` if it has one, else the root ones. An item stays within the sequence that holds its keyword, so `BUG` steps to `FIXED` and then back to no keyword. An item with no keyword starts on the first sequence.
+- On a plain line, a numbered item, an empty bullet, the front matter, or a line inside a code block, it changes nothing and says why.
+- It edits only the buffer, as one undo step. Save the note and refresh the dashboard to see the change there.
+
 ## Commands and keymaps
 
 | Command              | Default key  | Action                                                  |
@@ -185,9 +200,11 @@ Run these from a Markdown note. They edit only that buffer and never save it.
 | `:LatticeRefresh`    | `<leader>lr` | Rescan notes and reread `.lattice.json`                 |
 | `:LatticeAddTodo`    | `<leader>lt` | Add a `TODO` item below the cursor                      |
 | `:LatticeAddWaiting` | `<leader>ld` | Add an item under `Waiting On` in the current note      |
+| `:LatticeNextState`  | `<leader>ln` | Move the item under the cursor to its next state        |
+| `:LatticePrevState`  | `<leader>lp` | Move the item under the cursor to its previous state    |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
-Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting` and `health`.
+Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state` and `health`.
 
 Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
 
@@ -198,6 +215,8 @@ opts = {
     open = "<leader>nl",
     add_todo = "<leader>nt",
     add_waiting = "<leader>nw",
+    next_state = "<leader>nn",
+    prev_state = "<leader>np",
     refresh = false, -- no mapping
   },
   -- or keymaps = false to set none

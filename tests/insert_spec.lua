@@ -122,6 +122,131 @@ test("a normal insertion gives no warning", function()
   eq(buffer_text(), "# Title\n```\ncode\n```\nText\n- TODO Visible")
 end)
 
+-- Cycling TODO states ---------------------------------------------------------
+
+-- Runs a cycle command `times` times on `row` and returns the line.
+local function cycle_at(row, fn, times)
+  at(row)
+  for _ = 1, times or 1 do
+    fn()
+  end
+  return vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1]
+end
+
+test("next state cycles none -> TODO -> DONE -> none, like org", function()
+  reset(nil)
+  note_buffer("- Send update")
+  eq(cycle_at(1, lattice.next_state), "- TODO Send update")
+  eq(cycle_at(1, lattice.next_state), "- DONE Send update")
+  eq(cycle_at(1, lattice.next_state), "- Send update")
+end)
+
+test("previous state goes the other way", function()
+  reset(nil)
+  note_buffer("- Send update")
+  eq(cycle_at(1, lattice.prev_state), "- DONE Send update")
+  eq(cycle_at(1, lattice.prev_state), "- TODO Send update")
+  eq(cycle_at(1, lattice.prev_state), "- Send update")
+end)
+
+test("follows the note's front matter sequence, staying in the item's own sequence", function()
+  reset(nil)
+  note_buffer("---\ntodo:\n  - TODO NEXT | DONE CANCELED\n  - BUG | FIXED\n---\n- BUG crash\n- task")
+  eq(cycle_at(6, lattice.next_state), "- FIXED crash")
+  eq(cycle_at(6, lattice.next_state), "- crash")
+  eq(cycle_at(7, lattice.next_state, 4), "- CANCELED task")
+  eq(cycle_at(7, lattice.prev_state, 2), "- NEXT task")
+end)
+
+test("uses the root sequences from .lattice.json", function()
+  local root = notes()
+  write(root, ".lattice.json", '{"todo": ["ASK | ANSWERED"]}')
+  reset(root)
+  note_buffer("- Headcount")
+  eq(cycle_at(1, lattice.next_state), "- ASK Headcount")
+  eq(cycle_at(1, lattice.next_state), "- ANSWERED Headcount")
+end)
+
+test("works on headings, checkboxes, nested bullets and other markers", function()
+  reset(nil)
+  note_buffer("## Draft plan ##\n- [x] Old\n- Parent\n    * child\n+ plus")
+  eq(cycle_at(1, lattice.next_state), "## TODO Draft plan ##")
+  eq(cycle_at(2, lattice.next_state), "- [x] TODO Old")
+  eq(cycle_at(4, lattice.next_state), "    * TODO child")
+  eq(cycle_at(5, lattice.prev_state), "+ DONE plus")
+end)
+
+test("the change is a single undo step and keeps the cursor on the line", function()
+  reset(nil)
+  note_buffer("text\n- Send update")
+  vim.cmd("let &undolevels = &undolevels") -- start a fresh undo block
+  eq(cycle_at(2, lattice.next_state), "- TODO Send update")
+  eq(vim.api.nvim_win_get_cursor(0)[1], 2)
+  vim.cmd("silent undo")
+  eq(buffer_text(), "text\n- Send update")
+end)
+
+test("a word that is not a keyword is left as text", function()
+  reset(nil)
+  note_buffer("- todo lowercase\n- TODOS plural")
+  eq(cycle_at(1, lattice.next_state), "- TODO todo lowercase")
+  eq(cycle_at(2, lattice.next_state), "- TODO TODOS plural")
+end)
+
+test("refuses lines Lattice wouldn't list, changing nothing", function()
+  reset(nil)
+  local cases = {
+    { "plain paragraph", "list item" },
+    { "[x] TODO no bullet", "list item" },
+    { "1. ordered", "list item" },
+    { "-", "list item" },
+    { "- ", "no text" },
+    { "##", "list item" },
+  }
+  for _, case in ipairs(cases) do
+    note_buffer(case[1])
+    cycle_at(1, lattice.next_state)
+    eq(buffer_text(), case[1])
+    local message = H.last_notify().message
+    assert(message:find(case[2], 1, true), case[1] .. ": " .. message)
+  end
+  note_buffer("```\n- inside a fence\n```")
+  cycle_at(2, lattice.next_state)
+  eq(buffer_text(), "```\n- inside a fence\n```")
+  assert(H.last_notify().message:find("inside a code block", 1, true), H.last_notify().message)
+  note_buffer("---\ntodo:\n  - TODO | DONE\n---\n- task")
+  cycle_at(3, lattice.next_state)
+  eq(buffer_text(), "---\ntodo:\n  - TODO | DONE\n---\n- task")
+  assert(H.last_notify().message:find("front matter", 1, true), H.last_notify().message)
+end)
+
+test("removing a keyword works even where adding one would be refused", function()
+  reset(nil)
+  note_buffer("- DONE x")
+  eq(cycle_at(1, lattice.next_state), "- x")
+end)
+
+test("never changes the dashboard or a non-Markdown buffer", function()
+  local root = notes()
+  write(root, "a.md", "- TODO Task\n")
+  reset(root)
+  lattice.open()
+  local before = dashboard_text()
+  lattice.next_state()
+  eq(dashboard_text(), before)
+  vim.cmd("enew!")
+  vim.bo.filetype = "lua"
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "- item" })
+  lattice.next_state()
+  eq(buffer_text(), "- item")
+end)
+
+test("cycle_line reports the replaced span", function()
+  local kws = assert(H.keywords.build({ "TODO | DONE" }))
+  eq({ H.insert.cycle_line("  - [ ] TODO a", kws, 1) }, { "  - [ ] DONE a", 8, 13, "DONE", "DONE " })
+  eq({ H.insert.cycle_line("# a", kws, 1) }, { "# TODO a", 2, 2, "TODO", "TODO " })
+end)
+
 -- Waiting On items -----------------------------------------------------------
 
 test("adds to the end of a Waiting On section, past blanks and subitems", function()

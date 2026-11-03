@@ -6,7 +6,7 @@
 - Target: macOS + Neovim/LazyVim. Written primarily in Lua.
 - Product owner: The repository owner.
 
-> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The capture inbox and `[promised:...]` decisions recorded in `product-vision.md` (2026-11-01) remain in effect. **Amendment A (below) replaces the `To Do` heading convention with org-mode style TODO keywords.**
+> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The capture inbox and `[promised:...]` decisions recorded in `product-vision.md` (2026-11-01) remain in effect. **Amendment A (below) replaces the `To Do` heading convention with org-mode style TODO keywords; Amendment B adds state cycling.**
 
 ## Amendment A — Org-style TODO keywords (2026-11-02, requested by the product owner)
 
@@ -18,6 +18,15 @@ Replaces every rule about the `To Do` heading in §4, §5 (`headings.todo`) and 
 4. Open-state keyword items appear in MY TO DO, or in WAITING ON when inside a `Waiting On` section, with the state shown on each row. Done-state items, and keyword items checked `[x]`, appear in a DONE group: the 20 most recent, newest note first, with a count of the rest. `Waiting On` bullets without a keyword keep the `[ ]` / `[x]` rules, and checked ones stay hidden.
 5. `<leader>lt` inserts `- <first open keyword> <text>` below the cursor (after the front matter if the cursor is in it; on a list item, at its indent and after its sub-bullets). Inside a `Waiting On` section the inserted item is a waiting item, by rule 4. No heading is created or confirmed.
 6. `headings.todo` in an older `.lattice.json` is ignored with a notice.
+
+## Amendment B — Cycling TODO states (2026-11-03, requested by the product owner)
+
+Adds to §7. Like org-mode's `S-Right` / `S-Left`:
+
+1. `:LatticeNextState` (`<leader>ln`) and `:LatticePrevState` (`<leader>lp`) change the keyword of the bullet or ATX heading under the cursor, using the note's effective sequences (Amendment A, rule 3).
+2. An item steps through the sequence that holds its keyword (open states, then done states) and then to no keyword; backward reverses this. An item with no keyword starts on the first sequence. The keyword goes after the marker and any checkbox; the checkbox is not changed.
+3. The command refuses, changing nothing and saying why, when the result would not be a task Lattice lists: plain lines, ordered items, empty bullets, front matter, and code blocks. Removing a keyword is always allowed on a bullet or heading.
+4. It edits only the current buffer, as one undo step, and never saves. The keymaps follow the same conflict rules as the others (keymap names `next_state`, `prev_state`).
 
 ## 1. Executive summary
 
@@ -205,6 +214,7 @@ Implement commands or Lua functions which insert Markdown into the current real 
 | `<leader>ld`  | Add waiting item  | Prompt for assignee (optional) and task text, then insert `- [ ] @Person <task>` under `Waiting On` (or no name if omitted).   |
 | `<leader>ll`  | Open dashboard    | Equivalent to `:Lattice`.                                                                                                      |
 | `<leader>lr`  | Refresh           | Equivalent to `:LatticeRefresh`.                                                                                               |
+| `<leader>ln` / `<leader>lp` | Next / previous state | *(Amendment B.)* Step the item under the cursor through its keyword sequence. |
 
 - If the relevant heading is absent, ask before creating it. If the operation is canceled, leave the buffer untouched.
 - When a heading occurs more than once, use a documented deterministic strategy (e.g., nearest matching heading to cursor or prompt to choose); do not silently insert into an unrelated section.
