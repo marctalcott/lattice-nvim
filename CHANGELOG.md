@@ -1,31 +1,33 @@
 # Changelog
 
-Lattice is not released yet. This log tracks the work toward Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md).
+## 0.1.0 — 2026-11-03
 
-## Unreleased — Cycling TODO states
+First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.
 
-### Added
+### Cycling TODO states (#4)
+
+#### Added
 
 - `<leader>ln` / `:LatticeNextState` and `<leader>lp` / `:LatticePrevState` step the item under the cursor through its keyword sequence, like org-mode's `S-Right` / `S-Left`: no keyword → `TODO` → … → last done state → no keyword. They work on bullets and headings, use the note's own sequences, stay within the sequence that holds the item's keyword, and refuse lines Lattice wouldn't list (plain lines, numbered items, empty bullets, front matter, code blocks).
 - New keymap names `next_state` and `prev_state`.
 
-## Org-style TODO keywords (#2)
+### Org-style TODO keywords (#2)
 
-### Changed (breaking)
+#### Changed from Milestone 1
 
 - Personal tasks are now items whose first word is an org-mode style keyword: `- TODO Send update`, `## NEXT Draft plan`. They can sit anywhere in a note, at any nesting depth. The `To Do` heading is no longer recognized, so existing `## To Do` bullets need a keyword (`- TODO ...`) to appear.
 - Keywords match exactly, as in org-mode (`TODO`, not `todo` or `To Do`).
 - `<leader>lt` / `:LatticeAddTodo` adds `- TODO <task>` below the cursor instead of under a heading, so there is no heading prompt.
 - `headings.todo` in `.lattice.json` is ignored, with a notice.
 
-### Added
+#### Added
 
 - Keyword sequences such as `TODO NEXT | DONE CANCELED`, following org's `#+TODO:` rules (`|` splits open and done states; fast-access suffixes are ignored).
 - Root sequences come from `todo` in `.lattice.json` (default `TODO | DONE`). Per-note sequences come from a YAML front matter `todo:` key, which replaces the root ones for that note. Invalid front matter is a jumpable warning, and the note falls back to the root sequences.
 - Dashboard rows show each item's state, and a **DONE** group lists done-state items, most recently modified note first.
 - `:LatticeHealth` lists the root sequences and front matter problems.
 
-### Fixed (code review)
+#### Fixed (code review)
 
 - A note that opens with a horizontal rule is no longer mistaken for front matter. Front matter must start with a `key:` line and contain only YAML-shaped lines.
 - Front matter `todo:` also accepts unindented list items, flow lists, and `# comments`.
@@ -35,9 +37,9 @@ Lattice is not released yet. This log tracks the work toward Milestone 1 of [`sp
 - The DONE group shows the 20 most recent items plus a count of the rest.
 - Only notes with done items are checked for their modified time.
 
-## Milestone 1 (merged in #1)
+### Milestone 1 (#1)
 
-### Added
+#### Added
 
 - Dashboard sections **OVERDUE** (oldest first) and **DUE SOON** (today through 7 days ahead, soonest first). A task can appear in both its owner group and a date group.
 - Dashboard header with today's date, the scanned root and note count, an empty state that explains the heading convention, and the footer `Enter / r / q / ?`.
@@ -54,19 +56,19 @@ Lattice is not released yet. This log tracks the work toward Milestone 1 of [`sp
 - `doc/lattice.txt` (`:help lattice`), `specs/LATTICE_SPEC.md`, this changelog, and a fuller README with limitations and troubleshooting.
 - Tests split into `parser_spec`, `scanner_spec`, `dashboard_spec` and `insert_spec`, still run with `nvim -l tests/run.lua`. New coverage includes symlink cycles, `.git` skipping, empty notes, the 2/2/1 fixture, due-soon window edges, keymap conflicts, unsaved-buffer preservation, health reporting, and the sample notes.
 
-### Changed
+#### Changed
 
 - Insertion code moved from `init.lua` to `insert.lua`.
 - `examples/meeting-notes.md` renamed to `examples/sample-notes.md` and extended with edge cases.
 - The header date uses English names whatever the system locale, to match the rows.
 - Dates render as `Nov 05` (and `Nov 05, 2027` outside the current year). Waiting On rows read `Name — task`.
 
-### Kept from the initial version
+#### Kept from the initial version
 
 - Strict `To Do` / `Waiting On` parsing, `.lattice.json` scanning, source navigation, manual refresh.
 - The read-only capture **INBOX** group and the optional `[promised:YYYY-MM-DD]` tag, both recorded as decisions in `specs/product-vision.md` (2026-11-01). They go beyond LATTICE_SPEC.md but don't conflict with it.
 
-### Deferred (not implemented)
+#### Deferred (not implemented)
 
 - File watching or background indexing; refresh is manual.
 - A command that ticks `[x]` checkboxes. Cycle to a done keyword with `<leader>ln`, or edit the box by hand.
