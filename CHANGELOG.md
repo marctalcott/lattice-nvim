@@ -1,8 +1,18 @@
 # Changelog
 
-## Unreleased — Org-mode for Markdown
+## 0.2.0 — 2026-11-03 — Org-mode for Markdown
 
-Work toward [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2; plan and decisions in [`specs/ORG_MARKDOWN_PLAN.md`](specs/ORG_MARKDOWN_PLAN.md).
+Implements [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2 with its Amendment 1 (strict Org); plan and decisions in [`specs/ORG_MARKDOWN_PLAN.md`](specs/ORG_MARKDOWN_PLAN.md) (#5–#10).
+
+### Upgrading from 0.1
+
+- **Only headings are tasks**, as in Org-mode: `## TODO Send update`. Checkboxes are steps that count toward a heading's `[1/3]` progress and are not listed on the dashboard.
+- **Your 0.1 notes keep working.** `- TODO x` bullets, `Waiting On` sections, `@Name`, `[due:]`, `[promised:]` and front matter `todo:` are still read, and `:LatticeHealth` counts them. Run `:LatticeMigrate` in a note to convert it to Org headings (it asks first, and doesn't save).
+- **The default workflow** is now `TODO NEXT WAITING | DONE CANCELED` (was `TODO | DONE`).
+- **`<leader>lt` and `<leader>ld` add headings** (`## TODO x`, `## WAITING x` with `:ASSIGNED:`) instead of bullets.
+- **Tree-sitter:** notes are read with Neovim's built-in Markdown parser. A broken parser binary can crash Neovim; see the README's Troubleshooting.
+- **New keys** (all configurable, none replaces an existing mapping): `<leader>ls` state, `<leader>lx` checkbox, `<leader>lS` / `<leader>lD` dates, `<leader>l+` / `<leader>l-` priority, `<leader>lw` refile, `<leader>lA` archive. In the dashboard: `1`–`4` views, `F` filter, `t` / `+` / `-` / `S` / `D` edit a row, `s` save.
+- **New `.lattice.json` keys:** `workflows`, `priorities`, `inherit`, `deadlines`, `logging`, `enforce`, `repeat_to_state`, `archive`. `**/*_archive.md` joins the default excludes.
 
 ### Milestone A — Parser foundation
 
