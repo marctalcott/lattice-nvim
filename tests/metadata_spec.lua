@@ -32,7 +32,7 @@ end
 local function categories(result)
   return vim.tbl_map(function(d)
     return d.line .. " " .. d.category
-  end, result.diagnostics)
+  end, result.warnings)
 end
 
 -- §15 fixtures ------------------------------------------------------------------
@@ -52,7 +52,7 @@ test("§15.1 heading fixture", function()
   eq({ t.scheduled.date, t.deadline.date }, { "2026-11-05", "2026-11-09" })
   eq(t.properties.ASSIGNED, "Tavren Solis")
   eq({ t.title, t.tags }, { "Review architecture", { "engineering" } })
-  eq(r.diagnostics, {})
+  eq(r.warnings, {})
 end)
 
 test("§15.2 fixture under strict Org: the task is a heading; a checkbox with a drawer is not", function()
@@ -67,7 +67,7 @@ test("§15.2 fixture under strict Org: the task is a heading; a checkbox with a 
   local t = r.tasks[1]
   eq({ t.project, t.kind, t.state, t.done, t.workflow }, { "Krakatoa", "heading", "REVIEW", false, "krakatoa" })
   eq({ t.scheduled.date, t.properties.ASSIGNED, t.person }, { "2026-11-06", "Elira Voss", "Elira Voss" })
-  eq(r.diagnostics, {})
+  eq(r.warnings, {})
   local boxed = parse("# Krakatoa\n- [ ] Review release checklist\n  SCHEDULED: <2026-11-06 Fri>\n  :PROPERTIES:\n  :STATE: REVIEW\n  :END:")
   eq(#boxed.tasks, 0)
 end)
@@ -96,7 +96,7 @@ end)
 
 test("planning inside a list item is not Org planning and never reaches the heading", function()
   local r = parse("## TODO Parent\n- [ ] Child\n  SCHEDULED: <2026-11-05 Thu>\n  :PROPERTIES:\n  :X: 1\n  :END:")
-  eq({ r.tasks[1].scheduled, r.tasks[1].properties, r.diagnostics }, { nil, {}, {} })
+  eq({ r.tasks[1].scheduled, r.tasks[1].properties, r.warnings }, { nil, {}, {} })
 end)
 
 test("metadata inside fenced code is ignored", function()
@@ -112,7 +112,7 @@ end)
 test("invalid timestamps and wrong weekdays are diagnostics", function()
   local r = parse("## TODO A\nSCHEDULED: <2026-02-30 Mon>\n## TODO B\nDEADLINE: <2026-11-09 Fri>\n## TODO C\nSCHEDULED: <2026-11-05 Do>")
   eq(categories(r), { "2 invalid-timestamp", "4 weekday-mismatch" })
-  assert(r.diagnostics[2].message:find("is a Mon, not Fri", 1, true), r.diagnostics[2].message)
+  assert(r.warnings[2].message:find("is a Mon, not Fri", 1, true), r.warnings[2].message)
 end)
 
 test("timestamp parser", function()
@@ -197,7 +197,7 @@ end)
 
 test(":STATE: is not an Org property and changes nothing", function()
   local r = parse("## TODO Thing\n:PROPERTIES:\n:STATE: WAITING\n:END:")
-  eq({ r.tasks[1].state, r.tasks[1].properties.STATE, r.diagnostics }, { "TODO", "WAITING", {} })
+  eq({ r.tasks[1].state, r.tasks[1].properties.STATE, r.warnings }, { "TODO", "WAITING", {} })
 end)
 
 test("PAR-025 a project's workflow applies to its tasks", function()
@@ -328,6 +328,6 @@ test("examples/sample-notes.md parses as its comments describe, with no warnings
   eq(result.tasks[1].progress, { done = 1, total = 2, of = "checkboxes" })
   eq(result.tasks[1].inherited_tags, { "engineering" })
   eq(result.tasks[8].closed.date, "2026-10-28")
-  eq(result.diagnostics, {})
+  eq(result.warnings, {})
   eq(result.legacy, {})
 end)

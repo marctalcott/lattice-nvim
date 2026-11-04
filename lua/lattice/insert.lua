@@ -155,7 +155,7 @@ end
 --- Splits a list item or ATX heading into its prefix (marker and any
 --- checkbox, or the hashes) and the text after it. nil for other lines.
 local function item_parts(line)
-  local prefix, text = line:match("^([ \t]*[-*+][ \t]+%[[ xX]%][ \t]+)(.*)$")
+  local prefix, text = line:match("^([ \t]*[-*+][ \t]+%[[ xX%-]%][ \t]+)(.*)$")
   if not prefix then
     prefix, text = line:match("^([ \t]*[-*+][ \t]+)(.*)$")
   end
@@ -215,7 +215,7 @@ function M.cycle(buf, row, cfg, direction)
     -- Org has no list-item tasks. A Lattice v0.1 keyword bullet can still
     -- change or drop its state, but a plain item never gains one.
     local _, text = item_parts(line)
-    local word = text and text:match("^%[[ xX]%][ \t]+(%S.*)$") or text
+    local word = text and text:match("^%[[ xX%-]%][ \t]+(%S.*)$") or text
     local has_state = word and tasks.split_state(word, kws) ~= nil
     if text and not has_state then
       return nil, "list items aren't tasks in Org; put the cursor on a heading (## TODO …), or use <leader>lt to add one"
@@ -398,19 +398,14 @@ function M.set_state()
     warn("put the cursor on a heading")
     return
   end
-  local choices = {}
-  for _, cycle in ipairs(kws.cycles) do
-    vim.list_extend(choices, cycle)
-  end
-  choices[#choices + 1] = "(no state)"
-  vim.ui.select(choices, { prompt = "State: " }, function(choice)
+  vim.ui.select(keywords.choices(kws), { prompt = "State: " }, function(choice)
     if not choice then
       return
     end
     if not usable(buf) then
       return
     end
-    local new_lines, message = mutate.set_state(lines, cfg, row, choice == "(no state)" and "" or choice)
+    local new_lines, message = mutate.set_state(lines, cfg, row, choice == keywords.NO_STATE and "" or choice)
     if not new_lines then
       warn(message)
       return
@@ -442,41 +437,32 @@ function M.priority_down()
   end)
 end
 
---- Reads a date answer: YYYY-MM-DD, today, tomorrow, or +N with d/w/m/y,
---- optionally followed by HH:MM. Returns { date, time } or nil.
-function M.read_date(answer, today)
-  local text, time = vim.trim(answer):match("^(.-)%s*(%d%d?:%d%d)$")
-  if not text then
-    text = vim.trim(answer)
-  end
-  local schedule = require("lattice.schedule")
-  local timestamp = require("lattice.timestamp")
-  local date
-  if text == "today" or text == "" and time then
-    date = today
-  elseif text == "tomorrow" then
-    date = schedule.add_days(today, 1)
-  elseif text:match("^%+%d+[dwmy]$") then
-    local n, unit = text:match("^%+(%d+)([dwmy])$")
-    date = schedule.shift(assert(timestamp.parse("<" .. today .. ">")), tonumber(n), unit).date
-  elseif timestamp.valid_date(text) then
-    date = text
-  end
-  if not date then
-    return nil
-  end
-  if time then
-    local h, m = time:match("^(%d+):(%d+)$")
-    if tonumber(h) > 23 or tonumber(m) > 59 then
-      return nil
-    end
-    time = ("%02d:%s"):format(tonumber(h), m)
-  end
-  return { date = date, time = time }
+M.read_date = require("lattice.schedule").read_date
+
+--- The prompt for a SCHEDULED or DEADLINE answer.
+function M.date_prompt(keyword)
+  local label = keyword == "SCHEDULED" and "Schedule" or "Deadline"
+  return label .. " (YYYY-MM-DD, today, +3d, optional HH:MM; empty removes): "
 end
 
--- Org's C-c C-s / C-c C-d: set or remove SCHEDULED / DEADLINE. An
--- existing repeater and warning are kept, as Org keeps them.
+--- The edit for a date answer: a function(lines, line) that sets SCHEDULED
+--- or DEADLINE ("" removes it), keeping any repeater and warning period.
+--- nil and an error for an answer Lattice can't read. Shared by the note
+--- commands and the dashboard's S/D.
+function M.date_edit(keyword, answer)
+  local when
+  if answer ~= "" then
+    when = M.read_date(answer, os.date("%Y-%m-%d"))
+    if not when then
+      return nil, ("%q is not a date Lattice understands; nothing changed"):format(answer)
+    end
+  end
+  return function(lines, line)
+    return mutate.set_date(lines, line, keyword, when)
+  end
+end
+
+-- Org's C-c C-s / C-c C-d: set or remove SCHEDULED / DEADLINE.
 local function plan_command(keyword)
   local buf = current_markdown_buffer("schedule a task")
   if not buf then
@@ -492,32 +478,16 @@ local function plan_command(keyword)
     warn("put the cursor on a heading")
     return
   end
-  local existing
-  for _, task in ipairs(parse(lines, cfg).tasks) do
-    if task.line == row then
-      existing = task[keyword:lower()]
-    end
-  end
-  local label = keyword == "SCHEDULED" and "Schedule" or "Deadline"
-  ask(label .. " (YYYY-MM-DD, today, +3d, optional HH:MM; empty removes): ", function(answer)
+  ask(M.date_prompt(keyword), function(answer)
     if not usable(buf) then
       return
     end
-    local raw
-    if answer ~= "" then
-      local when = M.read_date(answer, os.date("%Y-%m-%d"))
-      if not when then
-        warn(("%q is not a date Lattice understands; nothing changed"):format(answer))
-        return
-      end
-      local timestamp = require("lattice.timestamp")
-      local ts = assert(timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">"))
-      if existing then
-        ts.repeater, ts.warning = existing.repeater, existing.warning
-      end
-      raw = require("lattice.schedule").format(ts)
+    local op, op_err = M.date_edit(keyword, answer)
+    if not op then
+      warn(op_err)
+      return
     end
-    local new_lines, err = mutate.set_planning(lines, row, keyword, raw)
+    local new_lines, err = op(lines, row)
     if not new_lines then
       warn(err)
       return
@@ -549,13 +519,22 @@ function M.migrate()
     return
   end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local new_lines, count = mutate.migrate(lines, cfg)
+  local new_lines, count, skipped = mutate.migrate(lines, cfg)
   if not new_lines then
     warn(count)
     return
   end
+  if #skipped > 0 then
+    local reasons = {}
+    for _, entry in ipairs(skipped) do
+      reasons[#reasons + 1] = ("line %d: %s"):format(entry.line, entry.reason)
+    end
+    warn(("%d item(s) left as written:\n%s"):format(#skipped, table.concat(reasons, "\n")))
+  end
   if count == 0 then
-    vim.notify("Lattice: this note has no Lattice v0.1 items to convert", vim.log.levels.INFO)
+    if #skipped == 0 then
+      vim.notify("Lattice: this note has no Lattice v0.1 items to convert", vim.log.levels.INFO)
+    end
     return
   end
   vim.ui.select({ "Yes", "No" }, {
@@ -575,6 +554,8 @@ end
 
 -- Refile and archive (§14.2) ------------------------------------------------
 
+-- The note's path relative to the notes root and the root, or its file
+-- name and its own folder when it is outside the root.
 local function relative(path)
   local root = config.options.root
   local real_root = root and (vim.uv.fs_realpath(root) or root)
@@ -582,7 +563,7 @@ local function relative(path)
   if real_root and real:sub(1, #real_root + 1) == real_root .. "/" then
     return real:sub(#real_root + 2), real_root
   end
-  return vim.fn.fnamemodify(path, ":t"), real_root
+  return vim.fn.fnamemodify(real, ":t"), vim.fn.fnamemodify(real, ":h")
 end
 
 --- Org's C-c C-w: moves the subtree under the cursor under a heading
@@ -635,7 +616,7 @@ function M.refile()
     local same = (vim.uv.fs_realpath(choice.path) or choice.path) == here
     if same then
       -- The target line may have moved if the note changed since the scan.
-      local dest = choice.line and require("lattice.dashboard").locate(lines, { line = choice.line, title = choice.text })
+      local dest = choice.line and dashboard.locate(lines, { line = choice.line, text = choice.text })
       if choice.line and not dest then
         warn("the target heading changed since the list was made; nothing was moved. Try again.")
         return
@@ -653,7 +634,7 @@ function M.refile()
     end
     local dest_buf = mutate.note_buffer(choice.path)
     local dest_lines = vim.api.nvim_buf_get_lines(dest_buf, 0, -1, false)
-    local dest = choice.line and require("lattice.dashboard").locate(dest_lines, { line = choice.line, title = choice.text })
+    local dest = choice.line and dashboard.locate(dest_lines, { line = choice.line, text = choice.text })
     if choice.line and not dest then
       warn("the target heading changed since the list was made; nothing was moved. Try again.")
       return
@@ -690,13 +671,17 @@ function M.archive()
     return
   end
   local path = vim.api.nvim_buf_get_name(buf)
-  local rel, real_root = relative(path)
-  local base = real_root and (real_root .. "/") or (vim.fn.fnamemodify(path, ":p:h") .. "/")
+  local rel, base = relative(path)
   local location = (cfg.archive or {}).location or "%s_archive.md"
   local stem = rel:gsub("%.md$", "")
-  local target = base .. location:gsub("%%s", function()
+  local target = base .. "/" .. location:gsub("%%s", function()
     return stem
   end)
+  local real_target = vim.uv.fs_realpath(target) or vim.fs.normalize(target)
+  if real_target == (vim.uv.fs_realpath(path) or path) then
+    warn(("archive.location %s points at this note itself; change it in .lattice.json"):format(location))
+    return
+  end
   if vim.fn.isdirectory(vim.fn.fnamemodify(target, ":h")) == 0 then
     warn(("the folder for %s doesn't exist; create it or change archive.location"):format(vim.fn.fnamemodify(target, ":~")))
     return

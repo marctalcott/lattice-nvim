@@ -169,9 +169,10 @@ function M.parse(lines)
         partial, rest = entry.text:match("^%[(%-)%][ \t]+(.*)$")
       end
       if bare then
-        entry.checkbox, entry.text = bare, ""
+        entry.checkbox, entry.text, entry.text_col = bare, "", #line
       elseif partial then
         entry.checkbox, entry.text = partial, rest
+        entry.text_col = entry.text_col + #line:sub(entry.text_col + 1):match("^%[%-%][ \t]+")
       end
       result.items[#result.items + 1] = entry
       item = #result.items

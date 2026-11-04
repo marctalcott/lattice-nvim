@@ -42,9 +42,11 @@ local function ordered_states(kws)
   return list
 end
 
-local function checked(box)
+--- True for a checked box, "[x]" or "[X]". Org's "[-]" is not checked.
+function M.checked(box)
   return box == "x" or box == "X"
 end
+local checked = M.checked
 
 --- The state `text` starts with (longest first, exact case), followed by
 --- whitespace or the end of the text, and the whitespace after it; nil if
@@ -170,8 +172,9 @@ end
 --- @param lines string[]
 --- @param cfg table  config.defaults() shape: keywords, workflows, priorities,
 ---   inherit, headings
---- @return table|nil result  { tasks, diagnostics, keywords, keywords_at,
----   sections, date_errors, warnings, legacy, front_matter }
+--- @return table|nil result  { tasks, warnings, keywords (at the note's
+---   root, after front matter), keywords_at, sections, date_errors, legacy,
+---   front_matter, headings, structure }
 --- @return string|nil err  when the Markdown parser is unavailable
 function M.parse(lines, cfg)
   local structure, err = markdown.parse(lines)
@@ -185,24 +188,19 @@ function M.parse(lines, cfg)
 
   local result = {
     tasks = {},
-    diagnostics = {},
     keywords = workflows.default or cfg.keywords,
     keywords_at = {}, -- line of each heading and list item -> its keyword table
     sections = {}, -- v0.1 Waiting On sections, for insertion
     date_errors = {}, -- v0.1 invalid [due:] dates on open tasks
-    warnings = {}, -- diagnostics shown on the dashboard
+    warnings = {}, -- { line, severity, category, message }, shown on the dashboard
     legacy = {}, -- { line, form } for v0.1 syntax still in use
     front_matter = structure.front_matter,
-    headings = {}, -- every heading, for refile targets: { line, level, text, path_titles }
+    headings = {}, -- every heading, for refile targets: { line, level, text, outline }
+    structure = structure, -- markdown.parse's result, for callers that need both
   }
 
-  local function diagnose(line, severity, category, message)
-    local entry = { line = line, severity = severity, category = category, message = message }
-    result.diagnostics[#result.diagnostics + 1] = entry
-    result.warnings[#result.warnings + 1] = entry
-  end
   local function warn(line, category, message)
-    diagnose(line, "warning", category, message)
+    result.warnings[#result.warnings + 1] = { line = line, severity = "warning", category = category, message = message }
   end
 
   -- File-level context: front matter `todo:` (v0.1), `project:`, `workflow:`.
@@ -217,17 +215,21 @@ function M.parse(lines, cfg)
       warn(todo_line, "workflow", ("front matter todo: %s; using the root keywords"):format(build_err))
     end
   end
-  local root_props = {}
+  local root_props, root_lines = {}, {}
   for _, key in ipairs({ "project", "workflow" }) do
-    root_props[key:upper()] = keywords.front_matter_scalar(lines, key)
+    root_props[key:upper()], root_lines[key:upper()] = keywords.front_matter_scalar(lines, key)
   end
-  local root = { props = root_props, tags = {} }
+  local root = { props = root_props, tags = {}, project = root_props.PROJECT }
 
-  -- Which keyword table applies, from a node's effective properties.
-  local function resolve(props, project, line)
+  -- Which keyword table applies, from a node's effective properties. An
+  -- unknown workflow is reported once, where it is set (`own`), not again
+  -- on every node that inherits it.
+  local function resolve(props, project, line, own)
     local name = props.WORKFLOW and props.WORKFLOW:lower()
     if name and not workflows[name] then
-      warn(line, "unknown-workflow", ("workflow %q is not configured; using the default"):format(props.WORKFLOW))
+      if own then
+        warn(line, "unknown-workflow", ("workflow %q is not configured; using the default"):format(props.WORKFLOW))
+      end
       name = nil
     end
     if not name and project and workflows[project:lower()] then
@@ -241,6 +243,8 @@ function M.parse(lines, cfg)
     end
     return workflows.default or cfg.keywords, "default"
   end
+  -- The keywords at the root: what a new top-level heading gets.
+  result.keywords = resolve(root_props, root.project, root_lines.WORKFLOW or 1, root_props.WORKFLOW ~= nil)
 
   -- States that belong to some workflow, to flag ones used out of place.
   local known_elsewhere = {}
@@ -376,7 +380,7 @@ function M.parse(lines, cfg)
       end
     end
 
-    local kws, workflow_name = resolve(props, project, node.line)
+    local kws, workflow_name = resolve(props, project, node.line, meta.properties.WORKFLOW ~= nil)
     result.keywords_at[node.line] = kws
 
     -- Context handed to descendants.
@@ -423,7 +427,6 @@ function M.parse(lines, cfg)
         state = checked(node.checkbox) and default_done or (kws.states.WAITING and "WAITING") or kws.first_open
       end
       task.state = state
-      -- v0.1: a checked box or a done state means done.
       -- v0.1: a checked box or a done state means done. Org's partly
       -- checked [-] is not checked.
       task.done = checked(node.checkbox) or kws.states[state] == "done"
@@ -547,7 +550,7 @@ function M.parse(lines, cfg)
     if item.checkbox and not item.parent and item.heading then
       local count = boxes[item.heading] or { done = 0, total = 0 }
       count.total = count.total + 1
-      if item.checkbox == "x" or item.checkbox == "X" then
+      if checked(item.checkbox) then
         count.done = count.done + 1
       end
       boxes[item.heading] = count
@@ -581,12 +584,26 @@ function M.parse(lines, cfg)
     end
   end
 
-  -- Every heading with its outline path, for refile targets (§14.2).
+  -- Every heading with its outline path, for refile targets and
+  -- :ARCHIVE_OLPATH: (§14.2). As in Org, the path holds each heading's
+  -- title without its state, priority or tags.
+  local function outline_title(heading)
+    local text = split_tags(heading.text)
+    local kws = result.keywords_at[heading.line]
+    local state, gap
+    if kws then
+      state, gap = M.leading_state(text, kws)
+    end
+    if state then
+      text = text:sub(#state + #gap + 1)
+    end
+    return (text:gsub("^%[#%w%][ \t]*", ""))
+  end
   for _, heading in ipairs(structure.headings) do
     local titles = {}
     local up = heading
     while up do
-      table.insert(titles, 1, (split_tags(up.text)))
+      table.insert(titles, 1, outline_title(up))
       up = up.parent and structure.headings[up.parent]
     end
     result.headings[#result.headings + 1] = { line = heading.line, level = heading.level, text = heading.text, outline = titles }

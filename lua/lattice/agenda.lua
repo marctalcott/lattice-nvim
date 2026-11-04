@@ -184,10 +184,6 @@ function M.week_start(date)
   return schedule.add_days(date, -((n + 3) % 7))
 end
 
--- Rough length of one repeater step in days, to jump near a range
--- instead of stepping from a timestamp that may be years old.
-local APPROX_DAYS = { h = 1 / 24, d = 1, w = 7, m = 30.4, y = 365.25 }
-
 -- Dates a timestamp falls on within [first, last]: the date itself, and
 -- for a repeater every later occurrence (as Org's agenda shows repeats),
 -- once per day even for hourly repeaters.
@@ -198,9 +194,10 @@ local function occurrences(ts, first, last)
     return (base_n >= first_n and base_n <= last_n) and { ts.date } or {}
   end
   local n, unit = ts.repeater.n, ts.repeater.unit
-  -- Start a little before the range: calendar months and years vary, so
-  -- the estimate is corrected by stepping.
-  local step = math.max(0, math.floor((first_n - base_n) / (n * APPROX_DAYS[unit])) - 2)
+  -- Jump to a little before the range instead of stepping from a timestamp
+  -- that may be years old: calendar months and years vary, so the estimate
+  -- is corrected by stepping.
+  local step = math.max(0, math.floor((first_n - base_n) / (n * schedule.UNIT_DAYS[unit])) - 2)
   local dates, seen = {}, {}
   for _ = 1, 400 do
     local current = step == 0 and ts or schedule.shift(ts, n * step, unit)

@@ -297,7 +297,7 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 
 **Priority:** with no cookie, up or down starts at the default (`B`); going past the highest or lowest value removes the cookie, as Org's `S-Up` / `S-Down` do.
 
-**`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a finished item (a checked box or a done state) gets a done state. Sub-items stay directly below their own heading as a list, before the headings of any nested items. An invalid date such as `[due:2026-02-30]` stays in the title, and is still listed under WARNINGS. `[due:]` on headings becomes `DEADLINE` too. Review the result, then save.
+**`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a finished item (a checked box or a done state) gets a done state. Sub-items stay directly below their own heading as a list, before the headings of any nested items. An invalid date such as `[due:2026-02-30]` stays in the title, and is still listed under WARNINGS. On headings, `[due:]` becomes `DEADLINE` too, and a `WAITING` heading's `@Name` and `[promised:]` become `:ASSIGNED:` and `:PROMISED:`. A few forms are left as written, with a message saying which and why: a bullet nested inside a plain list item (a heading there would split the list), an item that would need headings deeper than `######`, and a heading whose `[due:]` differs from its `DEADLINE`. Review the result, then save.
 
 ## Refiling and archiving
 
@@ -389,7 +389,7 @@ This file lives in the **notes root**, not in this plugin's repository. Every fi
 | `enforce.checkboxes` | `false`                    | Refuse to complete a task while its checkboxes are unchecked (Org's `org-enforce-todo-checkbox-dependencies`) |
 | `enforce.todo`   | `false`                        | Refuse to complete a task while its child TODO headings are open (Org's `org-enforce-todo-dependencies`) |
 | `repeat_to_state` | —                             | State a completed repeating task returns to; by default its previous state (Org's `org-todo-repeat-to-state`) |
-| `archive.location` | `"%s_archive.md"`            | Archive note for `:LatticeArchive`, relative to the root; `%s` is the note's path without `.md`. Its folder must exist. |
+| `archive.location` | `"%s_archive.md"`            | Archive note for `:LatticeArchive`, relative to the root; `%s` is the note's path without `.md`. Its folder must exist, and it can't be the note itself. A note outside the root archives beside itself. |
 | `deadlines.warning_days` | `14`                   | Default deadline warning period for DUE SOON, as Org's `org-deadline-warning-days`. A deadline's own `-Nd` wins. |
 | `scan.include`   | `["**/*.md"]`                  | Files to scan. Only `.md` files are ever read.             |
 | `scan.exclude`   | `["Archives/**", ".git/**", "**/*_archive.md"]` | Files and folders to skip. A list you give **replaces** the default, so keep `Archives/**` in it if you want Archives skipped. |

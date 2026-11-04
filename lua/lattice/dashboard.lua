@@ -50,14 +50,10 @@ end
 local schedule = require("lattice.schedule")
 local agenda = require("lattice.agenda")
 
-local function to_time(iso)
+-- English weekday abbreviation of an ISO date, independent of locale.
+local function weekday(iso)
   local y, m, d = iso:match("^(%d+)-(%d+)-(%d+)$")
-  return os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
-end
-
---- The ISO date `days` after `iso`, in local calendar terms.
-function M.add_days(iso, days)
-  return os.date("%Y-%m-%d", to_time(iso) + days * 86400)
+  return require("lattice.timestamp").weekday(tonumber(y), tonumber(m), tonumber(d))
 end
 
 local function date_label(iso, today)
@@ -69,13 +65,10 @@ local function date_label(iso, today)
   return label
 end
 
-local WEEKDAYS = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
-
 -- English names regardless of locale, matching the row date labels.
 local function header_date(today)
   local _, m, d = today:match("^(%d+)-(%d+)-(%d+)$")
-  local wday = os.date("*t", to_time(today)).wday
-  return ("%s %s %s"):format(WEEKDAYS[wday], MONTHS[tonumber(m)], d)
+  return ("%s %s %s"):format(weekday(today), MONTHS[tonumber(m)], d)
 end
 
 local function by_due_then_source(a, b)
@@ -371,7 +364,7 @@ function M.week_groups(tasks, today, first, warning_days, priorities)
       rows[#rows + 1] = row
     end
     local y, m, d = day.date:match("^(%d+)-(%d+)-(%d+)$")
-    local label = ("%s %s %s"):format(WEEKDAYS[os.date("*t", to_time(day.date)).wday], MONTHS[tonumber(m)], d)
+    local label = ("%s %s %s"):format(weekday(day.date), MONTHS[tonumber(m)], d)
     if y ~= today:sub(1, 4) then
       label = label .. ", " .. y
     end
@@ -699,23 +692,37 @@ local function note_buffer(path)
   return require("lattice.mutate").note_buffer(path)
 end
 
--- The line of a task's heading in `lines`: its recorded line if that still
--- carries its title, else the heading with that title nearest to it, so
--- edits elsewhere in the note don't send Lattice to the wrong line (PAR-030).
-function M.locate(lines, target)
-  local function holds(n)
-    local text = lines[n]
-    return text ~= nil and target.title ~= nil and text:find(target.title, 1, true) ~= nil
-  end
-  if target.title == nil or holds(target.line) then
+-- The line of a heading in `lines`: its recorded line if the heading there
+-- still matches, else the matching heading nearest to it, so edits
+-- elsewhere in the note don't send Lattice to the wrong line (PAR-030).
+-- A heading matches when its text equals `target.text` (refile targets) or,
+-- read as a task with `cfg`, its title equals `target.title` (dashboard
+-- rows; a v0.1 item row matches items, by `target.kind`). nil when nothing
+-- matches; the recorded line when the target names neither.
+function M.locate(lines, target, cfg)
+  if target.text == nil and target.title == nil then
     return target.line
   end
-  local best
-  for n, text in ipairs(lines) do
-    if text:match("^ ? ? ?#+%s") and holds(n) then
-      if not best or math.abs(n - target.line) < math.abs(best - target.line) then
-        best = n
+  local matches = {}
+  if target.text then
+    local structure = require("lattice.markdown").parse(lines)
+    for _, heading in ipairs(structure and structure.headings or {}) do
+      if heading.text == target.text then
+        matches[#matches + 1] = heading.line
       end
+    end
+  else
+    local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
+    for _, task in ipairs(parsed and parsed.tasks or {}) do
+      if task.kind == (target.kind or "heading") and task.title == target.title then
+        matches[#matches + 1] = task.line
+      end
+    end
+  end
+  local best
+  for _, n in ipairs(matches) do
+    if not best or math.abs(n - target.line) < math.abs(best - target.line) then
+      best = n
     end
   end
   return best
@@ -733,7 +740,7 @@ local function edit_row(op)
   local cfg = state.result.cfg
   local buf = note_buffer(target.path)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local line = M.locate(lines, target)
+  local line = M.locate(lines, target, cfg)
   if not line then
     vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)
     return
@@ -767,22 +774,18 @@ function M.row_state()
   local cfg = state.result.cfg
   local buf = note_buffer(target.path)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local line = M.locate(lines, target)
+  local line = M.locate(lines, target, cfg)
   local parsed = line and require("lattice.tasks").parse(lines, cfg)
   local kws = parsed and parsed.keywords_at[line]
   if not kws then
     vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)
     return
   end
-  local choices = {}
-  for _, cycle in ipairs(kws.cycles) do
-    vim.list_extend(choices, cycle)
-  end
-  choices[#choices + 1] = "(no state)"
-  vim.ui.select(choices, { prompt = "State: " }, function(choice)
+  local keywords = require("lattice.keywords")
+  vim.ui.select(keywords.choices(kws), { prompt = "State: " }, function(choice)
     if choice then
       edit_row(function(l, c, n)
-        return require("lattice.mutate").set_state(l, c, n, choice == "(no state)" and "" or choice)
+        return require("lattice.mutate").set_state(l, c, n, choice == keywords.NO_STATE and "" or choice)
       end)
     end
   end)
@@ -800,31 +803,18 @@ function M.row_date(keyword)
     vim.notify("Lattice: put the cursor on a task row", vim.log.levels.WARN)
     return
   end
-  local label = keyword == "SCHEDULED" and "Schedule" or "Deadline"
-  vim.ui.input({ prompt = label .. " (YYYY-MM-DD, today, +3d, optional HH:MM; empty removes): " }, function(answer)
+  local insert = require("lattice.insert")
+  vim.ui.input({ prompt = insert.date_prompt(keyword) }, function(answer)
     if answer == nil then
       return
     end
-    answer = vim.trim(answer)
-    edit_row(function(lines, cfg, line)
-      local raw
-      if answer ~= "" then
-        local when = require("lattice.insert").read_date(answer, os.date("%Y-%m-%d"))
-        if not when then
-          return nil, ("%q is not a date Lattice understands; nothing changed"):format(answer)
-        end
-        local timestamp = require("lattice.timestamp")
-        local ts = assert(timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">"))
-        local parsed = require("lattice.tasks").parse(lines, cfg)
-        for _, task in ipairs(parsed and parsed.tasks or {}) do
-          local existing = task.line == line and task[keyword:lower()]
-          if existing then
-            ts.repeater, ts.warning = existing.repeater, existing.warning
-          end
-        end
-        raw = schedule.format(ts)
-      end
-      return require("lattice.mutate").set_planning(lines, line, keyword, raw)
+    local op, err = insert.date_edit(keyword, vim.trim(answer))
+    if not op then
+      vim.notify("Lattice: " .. err, vim.log.levels.WARN)
+      return
+    end
+    edit_row(function(lines, _, line)
+      return op(lines, line)
     end)
   end)
 end
@@ -880,7 +870,7 @@ function M.jump()
     return
   end
   local last = vim.api.nvim_buf_line_count(0)
-  local line = M.locate(vim.api.nvim_buf_get_lines(0, 0, -1, false), target) or target.line
+  local line = M.locate(vim.api.nvim_buf_get_lines(0, 0, -1, false), target, state.result and state.result.cfg) or target.line
   vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
 end
 

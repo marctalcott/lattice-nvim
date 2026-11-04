@@ -113,8 +113,7 @@ test("today: scheduled today or earlier and still open, and deadlines today", fu
 end)
 
 test("due soon crosses month and year ends", function()
-  eq(dashboard.add_days("2026-12-28", 7), "2027-01-04")
-  eq(dashboard.add_days("2028-02-25", 7), "2028-03-03")
+  eq(require("lattice.schedule").add_days("2028-02-25", 7), "2028-03-03")
   local text = render({ task({ text = "New year", due = "2027-01-04" }) }, "2026-12-28")
   assert(not section(text, "TODAY"):find("New year", 1, true))
   assert(section(text, "DUE SOON"):find("New year", 1, true))

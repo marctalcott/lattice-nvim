@@ -111,7 +111,7 @@ test("Lattice v0.1 keyword bullets still read, as legacy items", function()
     return t.done
   end, r.tasks), { false, false, true, true })
   eq(#r.legacy, 4)
-  eq(r.diagnostics, {})
+  eq(r.warnings, {})
 end)
 
 test("PAR-006 fenced and indented code produce no tasks", function()

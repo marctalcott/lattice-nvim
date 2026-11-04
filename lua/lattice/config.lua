@@ -179,13 +179,23 @@ local function validate(raw)
     if next(raw.workflows) ~= nil and vim.islist(raw.workflows) then
       return nil, "workflows must be an object of named workflows"
     end
-    if raw.todo ~= nil and raw.workflows.default ~= nil then
-      return nil, "set the default workflow in either todo or workflows.default, not both"
-    end
-    for name, workflow in pairs(raw.workflows) do
+    -- Names are case-insensitive, so "Default" is the default workflow
+    -- and "Bugs" and "bugs" would be the same one.
+    local seen = {}
+    for name in pairs(raw.workflows) do
       if type(name) ~= "string" or not name:match("^[%w_%-]+$") then
         return nil, ("workflow name %s must be a single word"):format(vim.inspect(name))
       end
+      local key = name:lower()
+      if key == "default" and raw.todo ~= nil then
+        return nil, "set the default workflow in either todo or workflows.default, not both"
+      end
+      if seen[key] then
+        return nil, ("workflows %q and %q differ only in case; names are case-insensitive"):format(seen[key], name)
+      end
+      seen[key] = name
+    end
+    for name, workflow in pairs(raw.workflows) do
       local built, err = keywords.from_workflow(workflow)
       if not built then
         return nil, ("workflows.%s: %s"):format(name, err)
@@ -271,6 +281,9 @@ local function validate(raw)
     end
     if location:sub(1, 1) == "/" or location:sub(1, 1) == "~" or ("/" .. location .. "/"):find("/../", 1, true) then
       return nil, "archive.location must stay inside the notes root"
+    end
+    if location:gsub("^%./", "") == "%s.md" then
+      return nil, "archive.location %s.md is the note itself; use a different name or folder, such as \"%s_archive.md\""
     end
     cfg.archive.location = location
   end

@@ -14,9 +14,10 @@ local M = {}
 
 local PLANNING = { SCHEDULED = "scheduled", DEADLINE = "deadline", CLOSED = "closed" }
 
--- A planning line: one or more "KEYWORD: <timestamp>" pairs and nothing
--- else. Returns the pairs, or nil for any other line.
-local function planning_pairs(text)
+--- A planning line: one or more "KEYWORD: <timestamp>" pairs and nothing
+--- else. Returns the pairs { keyword, raw } in order, or nil for any other
+--- line.
+function M.planning_pairs(text)
   local pairs_found = {}
   local rest = text:gsub("(%u+):%s*([<%[][^>%]]*[>%]])", function(keyword, raw)
     if PLANNING[keyword] then
@@ -28,6 +29,7 @@ local function planning_pairs(text)
     return pairs_found
   end
 end
+local planning_pairs = M.planning_pairs
 
 --- Reads metadata from lines[first..last].
 --- @param diagnose fun(line: integer, category: string, message: string)
@@ -64,6 +66,10 @@ function M.read(lines, first, last, diagnose)
         local ts, err = timestamp.parse(pair.raw)
         if not ts then
           diagnose(i, "invalid-timestamp", ("%s: %s"):format(pair.keyword, err))
+        elseif not ts.active and field ~= "closed" then
+          -- Org ignores an inactive [..] timestamp here: it never reaches
+          -- the agenda.
+          diagnose(i, "inactive-timestamp", ("%s %s is inactive ([..]) and is ignored; use <..>"):format(pair.keyword, pair.raw))
         elseif meta[field] then
           diagnose(i, "duplicate-planning", ("%s appears more than once"):format(pair.keyword))
         else

@@ -59,6 +59,10 @@ local function normalize(year, month, day)
   return M.from_day_number(M.day_number(year, month, 1) + day - 1)
 end
 
+--- Length of one repeater or warning unit in days, as Org's org-get-wdays
+--- counts it (a month is 30.4 days).
+M.UNIT_DAYS = { h = 1 / 24, d = 1, w = 7, m = 30.4, y = 365.25 }
+
 -- A point in time as minutes since the epoch, for hour arithmetic.
 local function minutes_of(ts)
   local hour, minute = 0, 0
@@ -147,26 +151,29 @@ function M.next_occurrence(ts, now)
     end
     return M.shift(base, rep.n, rep.unit)
   end
-  -- "++": shift at least once, until the occurrence is after now. A date
-  -- without a time stands for its midnight, as in Org.
+  -- "++": the fewest whole intervals (at least one) that put the
+  -- occurrence after now. A date without a time stands for its midnight,
+  -- as in Org. Shifting from the original each time keeps month overflow
+  -- from drifting; the estimate jumps close, then steps correct it.
   local now_minutes = minutes_of(now_ts)
-  local next_ts = M.shift(ts, rep.n, rep.unit)
-  local steps = 1
-  while minutes_of(next_ts) <= now_minutes do
-    steps = steps + 1
-    -- Shift from the original each time, so month overflow cannot drift.
-    next_ts = M.shift(ts, rep.n * steps, rep.unit)
+  local function after_now(steps)
+    return minutes_of(M.shift(ts, rep.n * steps, rep.unit)) > now_minutes
   end
-  return next_ts
+  local interval = rep.n * M.UNIT_DAYS[rep.unit] * 1440
+  local steps = math.max(1, math.floor((now_minutes - minutes_of(ts)) / interval))
+  while steps > 1 and after_now(steps - 1) do
+    steps = steps - 1
+  end
+  while not after_now(steps) do
+    steps = steps + 1
+  end
+  return M.shift(ts, rep.n * steps, rep.unit)
 end
-
--- Org's org-get-wdays: a warning period in whole days.
-local WARNING_DAYS = { h = 1 / 24, d = 1, w = 7, m = 30.4, y = 365.25 }
 
 --- Days of advance warning for a deadline: its own `-Nd`, else `default`.
 function M.warning_days(ts, default)
   if ts.warning then
-    return math.floor(ts.warning.n * WARNING_DAYS[ts.warning.unit])
+    return math.floor(ts.warning.n * M.UNIT_DAYS[ts.warning.unit])
   end
   return default
 end
@@ -193,7 +200,7 @@ end
 function M.scheduled_status(ts, today)
   local since = M.days(today) - M.days(ts.date)
   if ts.warning then
-    local delay = math.floor(ts.warning.n * WARNING_DAYS[ts.warning.unit])
+    local delay = math.floor(ts.warning.n * M.UNIT_DAYS[ts.warning.unit])
     if since < delay then
       return since < 0 and "future" or "delayed", since
     end
@@ -204,6 +211,37 @@ function M.scheduled_status(ts, today)
     return "past", since
   end
   return "future", since
+end
+
+--- Reads a date answer: YYYY-MM-DD, today, tomorrow, or +N with d/w/m/y,
+--- optionally followed by HH:MM. Returns { date, time } or nil.
+function M.read_date(answer, today)
+  local text, time = vim.trim(answer):match("^(.-)%s*(%d%d?:%d%d)$")
+  if not text then
+    text = vim.trim(answer)
+  end
+  local date
+  if text == "today" or text == "" and time then
+    date = today
+  elseif text == "tomorrow" then
+    date = M.add_days(today, 1)
+  elseif text:match("^%+%d+[dwmy]$") then
+    local n, unit = text:match("^%+(%d+)([dwmy])$")
+    date = M.shift(assert(timestamp.parse("<" .. today .. ">")), tonumber(n), unit).date
+  elseif timestamp.valid_date(text) then
+    date = text
+  end
+  if not date then
+    return nil
+  end
+  if time then
+    local h, m = time:match("^(%d+):(%d+)$")
+    if tonumber(h) > 23 or tonumber(m) > 59 then
+      return nil
+    end
+    time = ("%02d:%s"):format(tonumber(h), m)
+  end
+  return { date = date, time = time }
 end
 
 --- What completing a repeating task at `now` changes (§10.3): the next
