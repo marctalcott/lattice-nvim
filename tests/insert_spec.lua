@@ -133,20 +133,20 @@ local function cycle_at(row, fn, times)
   return vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1]
 end
 
-test("next state cycles none -> TODO -> DONE -> none, like org", function()
+test("next state cycles none -> TODO -> NEXT -> WAITING -> DONE -> CANCELED -> none, like org", function()
   reset(nil)
   note_buffer("- Send update")
-  eq(cycle_at(1, lattice.next_state), "- TODO Send update")
-  eq(cycle_at(1, lattice.next_state), "- DONE Send update")
-  eq(cycle_at(1, lattice.next_state), "- Send update")
+  for _, state in ipairs({ "TODO ", "NEXT ", "WAITING ", "DONE ", "CANCELED ", "" }) do
+    eq(cycle_at(1, lattice.next_state), "- " .. state .. "Send update")
+  end
 end)
 
 test("previous state goes the other way", function()
   reset(nil)
   note_buffer("- Send update")
+  eq(cycle_at(1, lattice.prev_state), "- CANCELED Send update")
   eq(cycle_at(1, lattice.prev_state), "- DONE Send update")
-  eq(cycle_at(1, lattice.prev_state), "- TODO Send update")
-  eq(cycle_at(1, lattice.prev_state), "- Send update")
+  eq(cycle_at(1, lattice.prev_state, 4), "- Send update")
 end)
 
 test("follows the note's front matter sequence, staying in the item's own sequence", function()
@@ -173,7 +173,7 @@ test("works on headings, checkboxes, nested bullets and other markers", function
   eq(cycle_at(1, lattice.next_state), "## TODO Draft plan ##")
   eq(cycle_at(2, lattice.next_state), "- [x] TODO Old")
   eq(cycle_at(4, lattice.next_state), "    * TODO child")
-  eq(cycle_at(5, lattice.prev_state), "+ DONE plus")
+  eq(cycle_at(5, lattice.prev_state), "+ CANCELED plus")
 end)
 
 test("the change is a single undo step and keeps the cursor on the line", function()
@@ -222,7 +222,7 @@ end)
 
 test("removing a keyword works even where adding one would be refused", function()
   reset(nil)
-  note_buffer("- DONE x")
+  note_buffer("- CANCELED x")
   eq(cycle_at(1, lattice.next_state), "- x")
 end)
 

@@ -10,6 +10,26 @@ Work toward [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2;
 - `lattice.tasks`: heading tasks, checkbox tasks (every marker form, including numbered), keyword bullets, inline states on checkboxes, multi-word states, checkbox/state conflict diagnostics, and the unified task tree with source ranges.
 - Acceptance tests PAR-001 to PAR-006 and PAR-015. Not yet used by the dashboard.
 
+### Milestone B — Metadata and workflows
+
+- Planning lines (`SCHEDULED`, `DEADLINE`, `CLOSED`) and property drawers, read directly below a heading or inside a checkbox's list item, never from a neighbour (`lattice.metadata`, `lattice.timestamp`).
+- Priorities (`[#A]` on headings, `:PRIORITY:` on checkboxes), tags (trailing `:a:b:` on headings, `:TAGS:` on checkboxes) with inheritance, and properties with configurable inheritance.
+- `:STATE:` on checkboxes; the box decides completion, and disagreements are warnings.
+- Workflows in `.lattice.json` (`workflows`, with multi-word states), chosen by `:WORKFLOW:`, by project, by front matter `todo:`, or `default`. Projects are optional: an inherited `:PROJECT:`, front matter `project:`, or a top-level heading naming a configured workflow.
+- New `.lattice.json` keys: `workflows`, `priorities`, `inherit`, `deadlines.warning_days`.
+- Diagnostics for invalid timestamps, weekday mismatches, malformed drawers, unknown states, priorities and workflows, state conflicts, and duplicate `:ID:`s within and across notes, on the dashboard and in `:LatticeHealth`.
+- `:LatticeHealth` reports the Markdown parser, the workflows, and v0.1 syntax still in use.
+- The scanner, dashboard and commands now use the new parser; `lattice.parser` is removed. Dashboard rows show priority and tags.
+
+#### Changed
+
+- **Every checkbox is a task**, as the spec says, including numbered ones (`1. [ ]`).
+- The default workflow is `TODO NEXT WAITING | DONE CANCELED` (was `TODO | DONE`).
+- `- [ ] DONE x` is open, because the box decides (was done). It is listed as a warning.
+- Checked v0.1 `Waiting On` items now appear in DONE instead of being hidden.
+- Lattice v0.1 syntax keeps working: `Waiting On` sections (items get `WAITING`), `@Name`, `[due:]`, `[promised:]`, front matter `todo:`.
+- `examples/sample-notes.md` is now written in the Org style; the v0.1 example moved to `examples/legacy-v0.1-notes.md`.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.

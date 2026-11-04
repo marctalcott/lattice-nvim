@@ -1,6 +1,6 @@
 -- Read-only walk of the notes root. Nothing here writes to disk.
 local config = require("lattice.config")
-local parser = require("lattice.parser")
+local tasks = require("lattice.tasks")
 
 local M = {}
 
@@ -127,14 +127,19 @@ end
 
 function M.scan(root, cfg)
   local files, unreadable = M.list_files(root, cfg.scan)
-  local result = { tasks = {}, date_errors = {}, warnings = {}, unreadable = unreadable, files = #files }
+  local result = { tasks = {}, date_errors = {}, warnings = {}, legacy = {}, unreadable = unreadable, files = #files }
+  local ids = {} -- :ID: -> first task with it, across notes (§13.4)
   result.inbox = M.list_inbox(root, cfg.inbox.path, unreadable)
 
   for _, rel in ipairs(files) do
     local path = root .. "/" .. rel
     local lines, err = read_lines(path)
     if lines then
-      local parsed = parser.parse(lines, cfg)
+      local parsed, parse_err = tasks.parse(lines, cfg)
+      if not parsed then
+        result.error = parse_err
+        return result
+      end
       -- The modified time only orders the DONE group, so stat just the
       -- notes that have done-state items.
       local mtime
@@ -146,7 +151,27 @@ function M.scan(root, cfg)
       end
       for _, task in ipairs(parsed.tasks) do
         task.rel, task.path, task.mtime = rel, path, mtime
+        task.source.path = path
         result.tasks[#result.tasks + 1] = task
+        if task.id then
+          local first = ids[task.id]
+          if first and first.path ~= path then
+            result.warnings[#result.warnings + 1] = {
+              rel = rel,
+              path = path,
+              line = task.line,
+              severity = "warning",
+              category = "duplicate-id",
+              message = (":ID: %s is also used in %s:%d"):format(task.id, first.rel, first.line),
+            }
+          elseif not first then
+            ids[task.id] = task
+          end
+        end
+      end
+      for _, entry in ipairs(parsed.legacy) do
+        entry.rel, entry.path = rel, path
+        result.legacy[#result.legacy + 1] = entry
       end
       for _, bad in ipairs(parsed.date_errors) do
         bad.rel, bad.path = rel, path
@@ -191,7 +216,11 @@ function M.collect(root)
   end
 
   local result = M.scan(root, cfg)
+  if result.error then
+    return failed(result.error)
+  end
   result.root, result.notice, result.headings, result.keywords = root, notice, cfg.headings, cfg.keywords
+  result.workflows = cfg.workflows
   return result
 end
 

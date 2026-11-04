@@ -2,7 +2,7 @@
 local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
 local keywords = require("lattice.keywords")
-local parser = require("lattice.parser")
+local tasks = require("lattice.tasks")
 
 local M = {}
 
@@ -22,6 +22,17 @@ local function current_markdown_buffer(purpose)
     return nil
   end
   return buf
+end
+
+-- Parses the buffer's lines. If the Markdown parser is unavailable, warns
+-- and returns an empty result, so commands change nothing.
+local function parse(lines, cfg)
+  local result, err = tasks.parse(lines, cfg)
+  if not result then
+    warn(err)
+    return { tasks = {}, sections = {}, keywords = cfg.keywords, keywords_at = {}, failed = true }
+  end
+  return result
 end
 
 local function load_config()
@@ -56,7 +67,7 @@ end
 
 --- Sections of `kind` in the buffer, in file order.
 local function find_sections(lines, kind, cfg)
-  local parsed = parser.parse(lines, cfg)
+  local parsed = parse(lines, cfg)
   local found = {}
   for _, section in ipairs(parsed.sections) do
     if section.kind == kind then
@@ -100,7 +111,7 @@ end
 --- when it lands inside a code block (for example one that is never closed).
 function M.check_visible(buf, line, cfg)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  for _, task in ipairs(parser.parse(lines, cfg).tasks) do
+  for _, task in ipairs(parse(lines, cfg).tasks) do
     if task.line == line then
       return true
     end
@@ -124,7 +135,11 @@ end
 --- or nil and an error.
 function M.insert_todo(buf, text, cfg, cursor)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local keyword = parser.parse(lines, cfg).keywords.first_open
+  local parsed = parse(lines, cfg)
+  if parsed.failed then
+    return nil, "the Markdown parser is unavailable"
+  end
+  local keyword = parsed.keywords.first_open
   if not keyword then
     return nil, "this note's keyword sequences have no open state (a word before |)"
   end
@@ -228,7 +243,12 @@ function M.cycle(buf, row, cfg, direction)
   if row <= front_end then
     return nil, "the cursor is in the front matter; put it on a list item or heading"
   end
-  local kws = parser.parse(lines, cfg).keywords
+  local parsed = parse(lines, cfg)
+  if parsed.failed then
+    return nil, "the Markdown parser is unavailable"
+  end
+  -- The workflow in effect at this line (project, :WORKFLOW:, or note).
+  local kws = parsed.keywords_at[row] or parsed.keywords
   if #kws.cycles == 0 then
     return nil, "this note has no keyword sequences"
   end
@@ -239,7 +259,7 @@ function M.cycle(buf, row, cfg, direction)
   if state then
     lines[row] = new_line
     local listed = false
-    for _, task in ipairs(parser.parse(lines, cfg).tasks) do
+    for _, task in ipairs(parse(lines, cfg).tasks) do
       listed = listed or task.line == row
     end
     if not listed then

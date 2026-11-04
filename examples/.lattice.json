@@ -1,6 +1,13 @@
 {
   "version": 1,
-  "todo": ["TODO NEXT WAITING | DONE CANCELED"],
+  "workflows": {
+    "default": { "active": ["TODO", "NEXT", "WAITING"], "done": ["DONE", "CANCELED"] },
+    "etna": { "active": ["BACKLOG", "READY", "IN PROGRESS", "BLOCKED"], "done": ["COMPLETE", "CANCELED"] },
+    "krakatoa": { "active": ["TODO", "REVIEW", "APPROVED"], "done": ["DONE"] }
+  },
+  "priorities": { "values": ["A", "B", "C"], "default": "B" },
+  "inherit": { "tags": true, "properties": [] },
+  "deadlines": { "warning_days": 14 },
   "scan": {
     "include": ["**/*.md"],
     "exclude": ["Archives/**", ".git/**", "Projects/Completed/**"]
