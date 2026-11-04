@@ -8,6 +8,8 @@ Lattice is a local-first Neovim/LazyVim plugin that gathers what you owe other p
 
 Lattice is independent of Portico and works without it.
 
+New to Lattice? [`TUTORIAL.md`](TUTORIAL.md) walks through daily use.
+
 ## Requirements
 
 - Neovim 0.12. Tested on 0.12.4 on macOS. The code uses APIs that exist from Neovim 0.10 onward, but 0.10 and 0.11 are untested.
