@@ -46,6 +46,39 @@ local function heading_meta(lines, structure, index)
   return metadata.read(lines, heading.line + 1, math.min(last, heading.stop), function() end)
 end
 
+--- The line in `matches` nearest to `line`. nil when there is none, or when
+--- fewer than `expected` remain: one of several equal headings changed, so
+--- which one was meant can't be told.
+function M.nearest(matches, line, expected)
+  if expected and #matches < expected then
+    return nil
+  end
+  local best
+  for _, n in ipairs(matches) do
+    if not best or math.abs(n - line) < math.abs(best - line) then
+      best = n
+    end
+  end
+  return best
+end
+
+--- The heading whose text is `text`: on `line` if it is still there, else
+--- the nearest such heading (see M.nearest for `expected`). For refile
+--- targets chosen from a scan that may be out of date.
+function M.find_heading(lines, line, text, expected)
+  local structure = parse_structure(lines)
+  local matches = {}
+  for _, heading in ipairs(structure.headings) do
+    if heading.text == text then
+      if heading.line == line then
+        return line
+      end
+      matches[#matches + 1] = heading.line
+    end
+  end
+  return M.nearest(matches, line, expected)
+end
+
 --- "Now" for completion: local date and time, unless the caller passes one.
 function M.now()
   return { date = os.date("%Y-%m-%d"), time = os.date("%H:%M") }
@@ -76,9 +109,7 @@ end
 local ORDER = { CLOSED = 1, DEADLINE = 2, SCHEDULED = 3 }
 
 -- The "KEYWORD: <ts>" tokens of a planning line, in order.
-local function planning_tokens(line)
-  return metadata.planning_pairs(line) or {}
-end
+local planning_tokens = metadata.planning_pairs
 
 local function render_planning(indent, tokens)
   local parts = {}
@@ -662,39 +693,81 @@ function M.migrate(lines, cfg)
     return block
   end
 
-  -- Levels below its own heading that an item and its legacy children need.
-  local function depth(index)
-    local deepest = 0
-    for _, child in ipairs(children[index] or {}) do
-      deepest = math.max(deepest, depth(child))
+  -- Why the legacy item (and its legacy children) at `level` can't become
+  -- headings without losing or reordering something, or nil.
+  local function blocker(index, level)
+    local task = parsed.tasks[index]
+    if task.title == "" then
+      return "its title is only @Name; add a title first"
     end
-    return deepest + 1
+    if level > 6 then
+      return "it would need headings deeper than ######"
+    end
+    for _, child in ipairs(children[index] or {}) do
+      local item = item_at[parsed.tasks[child].line]
+      if structure.items[item.parent].line ~= task.line then
+        return ("line %d is inside a plain list item; move it out of that list first"):format(item.line)
+      end
+      local reason = blocker(child, level + 1)
+      if reason then
+        return reason
+      end
+    end
   end
 
-  -- Top-level legacy items and headings with legacy forms, bottom-up so
+  -- The heading's DEADLINE as written, active or not ("<2026-11-20 Fri>").
+  local function written_deadline(task)
+    for _, at in ipairs(task.planning_lines or {}) do
+      for _, token in ipairs(planning_tokens(lines[at]) or {}) do
+        if token.keyword == "DEADLINE" then
+          return token.raw
+        end
+      end
+    end
+  end
+
+  -- Why a heading's legacy forms can't be converted, or nil.
+  local function heading_blocker(task)
+    local legacy = task.legacy
+    if legacy.assigned and task.title == "" then
+      return "its title is only @Name; add a title first"
+    end
+    local deadline = written_deadline(task)
+    if legacy.due and deadline and not (task.deadline and task.deadline.date == legacy.due) then
+      return ("its [due:%s] differs from its DEADLINE %s; keep one"):format(legacy.due, deadline)
+    end
+    local promised = task.properties.PROMISED
+    if legacy.promised and promised and promised ~= legacy.promised then
+      return ("its [promised:%s] differs from its :PROMISED: %s; keep one"):format(legacy.promised, promised)
+    end
+  end
+
+  -- Top-level legacy items and headings with legacy forms. Tasks come in
+  -- line order, so `skipped` does too; `work` is applied bottom-up so
   -- earlier line numbers stay valid.
   local work, skipped = {}, {}
+  local function skip(line, reason)
+    skipped[#skipped + 1] = { line = line, reason = reason }
+  end
   for index, task in ipairs(parsed.tasks) do
     local nested = task.kind == "item" and task.parent and parsed.tasks[task.parent].kind == "item"
     if task.kind == "item" and not nested then
       local item = item_at[task.line]
       local base = item.heading and structure.headings[item.heading].level or 1
-      if item.parent then
-        skipped[#skipped + 1] = { line = task.line, reason = "it is inside a plain list item; move it out of the list first" }
-      elseif base + depth(index) > 6 then
-        skipped[#skipped + 1] = { line = task.line, reason = "it would need headings deeper than ######" }
+      local reason = item.parent and "it is inside a plain list item; move it out of the list first" or blocker(index, base + 1)
+      if reason then
+        skip(task.line, reason)
       else
         work[#work + 1] = index
       end
     elseif task.kind == "heading" and next(task.legacy) then
-      work[#work + 1] = index
+      local reason = heading_blocker(task)
+      if reason then
+        skip(task.line, reason)
+      else
+        work[#work + 1] = index
+      end
     end
-  end
-  table.sort(skipped, function(a, b)
-    return a.line < b.line
-  end)
-  if #work == 0 then
-    return lines, 0, skipped
   end
   table.sort(work, function(a, b)
     return parsed.tasks[a].line > parsed.tasks[b].line
@@ -704,35 +777,27 @@ function M.migrate(lines, cfg)
   for _, index in ipairs(work) do
     local task = parsed.tasks[index]
     if task.kind == "heading" then
-      local before = out[task.line]
+      count = count + 1 -- items are counted by convert()
       local legacy = task.legacy
       -- Removes the first "[tag:value]" with exactly this value.
       local function drop(tag, value)
         out[task.line] = out[task.line]:gsub("[ \t]*%[" .. tag .. ":" .. vim.pesc(value) .. "%]", "", 1)
       end
       if legacy.due then
-        if not task.deadline or task.deadline.date == legacy.due then
-          drop("due", legacy.due)
-          if not task.deadline then
-            out = assert(M.set_planning(out, task.line, "DEADLINE", date_stamp(legacy.due)))
-          end
-        else
-          skipped[#skipped + 1] = {
-            line = task.line,
-            reason = ("its [due:%s] differs from its DEADLINE %s; keep one"):format(legacy.due, task.deadline.date),
-          }
+        drop("due", legacy.due)
+        if not task.deadline then
+          out = assert(M.set_planning(out, task.line, "DEADLINE", date_stamp(legacy.due)))
         end
       end
       if legacy.promised then
         drop("promised", legacy.promised)
-        out = assert(M.set_property(out, task.line, "PROMISED", legacy.promised))
+        if not task.properties.PROMISED then
+          out = assert(M.set_property(out, task.line, "PROMISED", legacy.promised))
+        end
       end
       if legacy.assigned then
         out[task.line] = out[task.line]:gsub("([ \t])@" .. vim.pesc(legacy.assigned) .. "[ \t]*", "%1", 1)
         out = assert(M.set_property(out, task.line, "ASSIGNED", legacy.assigned))
-      end
-      if out[task.line] ~= before then
-        count = count + 1
       end
     else
       local item = item_at[task.line]
@@ -753,9 +818,6 @@ function M.migrate(lines, cfg)
       end
     end
   end
-  table.sort(skipped, function(a, b)
-    return a.line < b.line
-  end)
   return out, count, skipped
 end
 

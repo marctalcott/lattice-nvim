@@ -66,7 +66,6 @@ end
 --- @field ordered boolean
 --- @field checkbox string|nil " " or "x"/"X"; nil without a task marker
 --- @field text string         first line of the item's text
---- @field text_col integer    0-based byte column where `text` starts
 --- @field parent integer|nil  index of the enclosing item
 --- @field heading integer|nil index of the enclosing heading
 
@@ -155,10 +154,8 @@ function M.parse(lines)
       local line = lines[sr + 1] or ""
       if text_node and text_node:range() == sr then
         local _, tc = text_node:range()
-        entry.text_col = tc
         entry.text = vim.trim(line:sub(tc + 1))
       else
-        entry.text_col = #line
         entry.text = ""
       end
       -- "- [ ]" with nothing after it is an empty task item, not text, and
@@ -169,10 +166,9 @@ function M.parse(lines)
         partial, rest = entry.text:match("^%[(%-)%][ \t]+(.*)$")
       end
       if bare then
-        entry.checkbox, entry.text, entry.text_col = bare, "", #line
+        entry.checkbox, entry.text = bare, ""
       elseif partial then
         entry.checkbox, entry.text = partial, rest
-        entry.text_col = entry.text_col + #line:sub(entry.text_col + 1):match("^%[%-%][ \t]+")
       end
       result.items[#result.items + 1] = entry
       item = #result.items

@@ -58,7 +58,7 @@ test("dashboard locate matches whole task titles, not parts of other lines", fun
   eq(dashboard.locate(moved, { line = 3, title = "Call Bob" }, DEFAULT), 3)
   eq(dashboard.locate(L("## TODO Call Bob"), { line = 1, title = "Call" }, DEFAULT), nil)
   -- Refile targets compare the raw heading text.
-  eq(dashboard.locate(L("# Fuji\n## Plans B\n## Plans"), { line = 2, text = "Plans" }), 3)
+  eq(mutate.find_heading(L("# Fuji\n## Plans B\n## Plans"), 2, "Plans"), 3)
 end)
 
 -- 3. Migrating a TODO bullet nested in a plain item split the list -----------------
@@ -180,8 +180,6 @@ test("cycling a v0.1 bullet with Org's [-] box changes its state", function()
   local state, err = H.insert.cycle(0, 2, DEFAULT, 1)
   eq({ state, err }, { "NEXT", nil })
   eq(vim.api.nvim_buf_get_lines(0, 1, 2, false)[1], "- [-] NEXT half")
-  local structure = require("lattice.markdown").parse(L("- [-] TODO half"))
-  eq(structure.items[1].text_col, 6)
 end)
 
 -- 13. Rescheduling a heading without a state dropped its repeater ---------------------
@@ -267,4 +265,85 @@ test("a state change does not re-parse more than it needs to", function()
   assert(mutate.set_state(L("# Etna\n## TODO a\n## TODO b"), cfg, 2, "DONE", { date = "2026-11-04", time = "09:00" }))
   markdown.parse = parse
   assert(calls <= 3, calls)
+end)
+
+-- Second review (of the fixes above) ----------------------------------------------
+
+test("migrate keeps a [promised:] that differs from the heading's :PROMISED:", function()
+  local lines = L("## WAITING estimate [promised:2026-11-10]\n:PROPERTIES:\n:PROMISED: 2026-12-01\n:END:")
+  local out, count, skipped = mutate.migrate(lines, DEFAULT)
+  eq({ T(out), count }, { T(lines), 0 })
+  assert(skipped[1].reason:find("differs from its :PROMISED:", 1, true), skipped[1].reason)
+  local same = mutate.migrate(L("## WAITING estimate [promised:2026-12-01]\n:PROPERTIES:\n:PROMISED: 2026-12-01\n:END:"), DEFAULT)
+  eq(T(same), "## WAITING estimate\n:PROPERTIES:\n:PROMISED: 2026-12-01\n:END:")
+end)
+
+test("migrate doesn't replace an inactive DEADLINE with a [due:] date", function()
+  local lines = L("## TODO pay [due:2026-11-10]\nDEADLINE: [2026-11-20 Fri]")
+  local out, count, skipped = mutate.migrate(lines, DEFAULT)
+  eq({ T(out), count }, { T(lines), 0 })
+  assert(skipped[1].reason:find("DEADLINE [2026-11-20 Fri]", 1, true), skipped[1].reason)
+end)
+
+test("migrate leaves a legacy tree alone when a nested item sits in a plain item", function()
+  local lines = L("# Notes\n- TODO outer\n  - plain\n    - TODO inner\n    - after inner\n  - plain2")
+  local out, count, skipped = mutate.migrate(lines, DEFAULT)
+  eq({ T(out), count }, { T(lines), 0 })
+  eq(skipped[1].line, 2)
+  assert(skipped[1].reason:find("line 4 is inside a plain list item", 1, true), skipped[1].reason)
+end)
+
+test("migrate leaves a WAITING heading or item whose title is only @Name", function()
+  local lines = L("## WAITING @Bob\n## Waiting On\n- @Ana")
+  local out, count, skipped = mutate.migrate(lines, DEFAULT)
+  eq({ T(out), count, #skipped }, { T(lines), 0, 2 })
+  assert(skipped[1].reason:find("only @Name", 1, true), skipped[1].reason)
+end)
+
+test("a zero-length repeater is reported, not crashed on", function()
+  local ts, err = timestamp.parse("<2026-10-01 Thu +0d>")
+  eq(ts, nil)
+  assert(err:find("never moves", 1, true), err)
+  local r = assert(tasks.parse(L("## TODO a\nSCHEDULED: <2026-10-01 Thu ++0d>"), DEFAULT))
+  eq(r.tasks[1].scheduled, nil)
+  eq(r.warnings[1].category, "invalid-timestamp")
+end)
+
+test("a row edit is refused when one of two tasks with the same title was renamed", function()
+  local lines = L("# A\n## TODO Call Ana\n# B\n## TODO Call")
+  -- Drawn when both said "Call" (twins = 2); line 2 has since been renamed.
+  local target = { line = 2, title = "Call", raw = "## TODO Call", twins = 2 }
+  eq(dashboard.locate(lines, target, DEFAULT), nil)
+  -- Lines added above both: each is still found, the nearer one wins.
+  local shifted = L("intro\n# A\n## TODO Call\n# B\n## TODO Call")
+  eq(dashboard.locate(shifted, target, DEFAULT), 3)
+  -- An unchanged line needs no parse.
+  eq(dashboard.locate(L("x\n## TODO Call"), target, DEFAULT), 2)
+  eq(mutate.find_heading(L("## Plans X\n## Plans"), 1, "Plans", 2), nil)
+end)
+
+test("archiving a buffer that has no file is refused", function()
+  local root = notes()
+  write(root, ".lattice.json", "{}")
+  reset(root)
+  vim.cmd("enew!")
+  vim.bo.filetype = "markdown"
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "## DONE x" })
+  lattice.archive()
+  assert(H.last_notify().message:find("save this note to a file first", 1, true), H.last_notify().message)
+  eq(vim.fn.bufnr("_archive.md"), -1)
+  eq(buffer_text(), "## DONE x")
+end)
+
+test("dashboard edits and Enter on an unchanged note parse it at most once", function()
+  local markdown = require("lattice.markdown")
+  local calls = 0
+  local parse = markdown.parse
+  markdown.parse = function(...)
+    calls = calls + 1
+    return parse(...)
+  end
+  local line = dashboard.locate(L("# A\n## TODO Call"), { line = 2, title = "Call", raw = "## TODO Call", twins = 1 }, DEFAULT)
+  markdown.parse = parse
+  eq({ line, calls }, { 2, 0 })
 end)

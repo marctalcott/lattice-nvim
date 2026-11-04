@@ -404,6 +404,19 @@ end
 function M.render(result, today, opts)
   opts = opts or {}
   local lines, highlights, targets = {}, {}, {}
+  -- How many tasks in each note share a title, so an edit can tell when one
+  -- of several equal titles changed (M.locate).
+  local twins
+  local function twin_count(task)
+    if not twins then
+      twins = {}
+      for _, t in ipairs(result.tasks or {}) do
+        local key = (t.path or "") .. "\0" .. t.title
+        twins[key] = (twins[key] or 0) + 1
+      end
+    end
+    return twins[(task.path or "") .. "\0" .. task.title]
+  end
 
   local function add(line, group)
     lines[#lines + 1] = line
@@ -520,7 +533,14 @@ function M.render(result, today, opts)
     for _, row in ipairs(group.rows) do
       add(row.line)
       targets[#lines] = row.project and { project = row.project }
-        or { path = row.task.path, line = row.task.line, title = row.task.title, kind = row.task.kind }
+        or {
+          path = row.task.path,
+          line = row.task.line,
+          title = row.task.title,
+          kind = row.task.kind,
+          raw = row.task.raw,
+          twins = row.task.title and twin_count(row.task),
+        }
       for _, part in ipairs(row.parts) do
         highlights[#highlights + 1] = { line = #lines - 1, col = part.col, len = part.len, hl = part.hl }
       end
@@ -692,40 +712,25 @@ local function note_buffer(path)
   return require("lattice.mutate").note_buffer(path)
 end
 
--- The line of a heading in `lines`: its recorded line if the heading there
--- still matches, else the matching heading nearest to it, so edits
--- elsewhere in the note don't send Lattice to the wrong line (PAR-030).
--- A heading matches when its text equals `target.text` (refile targets) or,
--- read as a task with `cfg`, its title equals `target.title` (dashboard
--- rows; a v0.1 item row matches items, by `target.kind`). nil when nothing
--- matches; the recorded line when the target names neither.
+-- The line of a task in `lines`: its recorded line while that line is
+-- unchanged (no parse needed), else the nearest task of the same kind whose
+-- title equals `target.title`, read with `cfg`, so edits elsewhere in the
+-- note don't send Lattice to the wrong line (PAR-030). nil when none
+-- matches, or when fewer tasks carry the title than when the dashboard was
+-- drawn (one of several equal titles changed, so which was meant is
+-- unknown). Also returns the parse, when one was needed.
 function M.locate(lines, target, cfg)
-  if target.text == nil and target.title == nil then
+  if target.title == nil or (target.raw ~= nil and lines[target.line] == target.raw) then
     return target.line
   end
+  local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
   local matches = {}
-  if target.text then
-    local structure = require("lattice.markdown").parse(lines)
-    for _, heading in ipairs(structure and structure.headings or {}) do
-      if heading.text == target.text then
-        matches[#matches + 1] = heading.line
-      end
-    end
-  else
-    local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
-    for _, task in ipairs(parsed and parsed.tasks or {}) do
-      if task.kind == (target.kind or "heading") and task.title == target.title then
-        matches[#matches + 1] = task.line
-      end
+  for _, task in ipairs(parsed and parsed.tasks or {}) do
+    if task.kind == (target.kind or "heading") and task.title == target.title then
+      matches[#matches + 1] = task.line
     end
   end
-  local best
-  for _, n in ipairs(matches) do
-    if not best or math.abs(n - target.line) < math.abs(best - target.line) then
-      best = n
-    end
-  end
-  return best
+  return require("lattice.mutate").nearest(matches, target.line, target.twins), parsed
 end
 
 -- Runs `op(lines, cfg, line)` from mutate on the note behind the row under
@@ -774,8 +779,8 @@ function M.row_state()
   local cfg = state.result.cfg
   local buf = note_buffer(target.path)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local line = M.locate(lines, target, cfg)
-  local parsed = line and require("lattice.tasks").parse(lines, cfg)
+  local line, parsed = M.locate(lines, target, cfg)
+  parsed = line and (parsed or require("lattice.tasks").parse(lines, cfg))
   local kws = parsed and parsed.keywords_at[line]
   if not kws then
     vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)

@@ -163,6 +163,7 @@ local function new_task(kind, line, stop)
     project = nil,
     workflow = nil,
     line = line,
+    raw = nil, -- the source line as written, to find the task again cheaply
     source = { start_line = line, end_line = stop },
     legacy = {},
   }
@@ -485,6 +486,7 @@ function M.parse(lines, cfg)
       end
 
       task.title = title
+      task.raw = lines[node.line]
       task.tags = own_tags
       task.inherited_tags = {}
       for _, tag in ipairs(inherited_tags) do
