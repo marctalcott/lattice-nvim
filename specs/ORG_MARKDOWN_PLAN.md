@@ -9,7 +9,7 @@ One pull request per spec milestone (§17). The plugin keeps working after every
 | PR | Milestone | Contents | User-visible change |
 |----|-----------|----------|---------------------|
 | 1 | A — Parser foundation | Spec, this plan, Tree-sitter structure (`markdown.lua`), task identification and hierarchy (`tasks.lua`), PAR-001..006 | None yet: the dashboard still uses the v0.1 parser |
-| 2 | B — Metadata and workflows | Planning lines, priorities, tags (local and inherited), property drawers, `STATE`, project and workflow resolution, `.lattice.json` `workflows`, legacy v0.1 reading; scanner and dashboard switch to the new parser; v0.1 `parser.lua` removed | All checkboxes become tasks; states, priorities, tags on rows |
+| 2 | B — Metadata and workflows | Planning lines, priorities, tags (local and inherited), property drawers, `STATE`, project and workflow resolution, `.lattice.json` `workflows`, legacy v0.1 reading; scanner and dashboard switch to the new parser; v0.1 `parser.lua` removed | States, priorities, tags on rows (checkbox tasks were later withdrawn, D14) |
 | 3 | C — Scheduling engine | Timestamps, SCHEDULED, DEADLINE with warnings, repeaters (`+`, `++`, `.+`) with Org calendar arithmetic | Agenda dates come from SCHEDULED/DEADLINE |
 | 4 | D — Mutation engine | Controlled mutation layer: `set_state`, checkbox sync, progress cookies, parent rollup, CLOSED, scheduling edits, recurrence on completion, `:LatticeMigrate` | Editing commands; migration of v0.1 notes |
 | 5 | E — Integration | Unified index, agenda and project queries, filtering, incremental refresh, PAR-026..030 end to end | Agenda dashboard |
@@ -52,17 +52,17 @@ The parser keeps reading v0.1 forms, and `:LatticeHealth` lists them as legacy:
 
 Workflows (§4.1, §4.2), priorities (§5), tag and property inheritance (§6.3, §7) and deadline warning days (§9.2) live in `.lattice.json` in the notes root, using the spec's table shapes in JSON, so every computer reads the same settings. `setup()` keeps `root` and keymaps. The v0.1 `todo` key keeps working as the `default` workflow.
 
-### D5. Every checkbox is a task (PO, 2026-11-03) — spec §3.2
+### D5. Every checkbox is a task (PO, 2026-11-03) — superseded by D14
 
-As the spec says. A box without a state gets the default unfinished state (`[ ]`) or default done state (`[x]`/`[X]`), from the first sequence of the applicable workflow.
+Implemented in milestone B, then reversed the same day when the PO chose strict Org (D14).
 
-### D6. Keyword bullets stay tasks — Extended (PO, 2026-11-03)
+### D6. Keyword bullets — now legacy (D14)
 
-`- TODO Send update` (no box) remains a task, with kind `checkbox` and `checkbox = nil`. A box may also carry an inline state, `- [ ] WAITING Reply` (Extended), equivalent to `:STATE: WAITING`.
+`- TODO Send update` and `- [ ] NEXT x` are read as Lattice v0.1 items (kind `item`), with v0.1 rules: a checked box or a done state means done. Org has no list-item tasks, so Lattice never writes them.
 
-### D7. Checkbox and state conflicts — spec §3.3
+### D7. Checkbox and state conflicts — withdrawn (D14)
 
-The box is basic completion (rule 1): `- [x] TODO x` counts as done, `- [ ] DONE x` as open, and both produce a `state-conflict` diagnostic (rule 6). Lattice never rewrites either value during a scan.
+With no checkbox tasks there is nothing to conflict. Legacy items use v0.1 rules without diagnostics.
 
 ### D8. Multi-word states — spec §4.2
 
@@ -98,20 +98,29 @@ Org shifts timestamps with Emacs `encode-time`, and `lattice.schedule` matches i
 
 OVERDUE uses deadlines before today. TODAY follows Org's daily agenda: scheduled today, or scheduled earlier and still open, after any `-Nd` delay, plus deadlines today. DUE SOON uses each deadline's warning period, else `deadlines.warning_days` (14, Org's default; the v0.1 window was a fixed 7 days). A v0.1 `[due:]` date counts as a deadline.
 
+### D14. Strict Org: only headings are tasks (PO, 2026-11-03) — spec Amendment 1
+
+Asked whether Org counts `- [ ]` as a TODO (it does not), the PO chose to follow Org. Only headings are tasks. Checkboxes are steps that feed progress cookies (top-level boxes in the entry, else child TODO headings) and are not on the dashboard. Org metadata (planning, drawers, tags, priority) is read only for headings, and `:PRIORITY:` / `:STATE:` drawer entries set nothing. Org's `[-]` is recognized. v0.1 list forms stay readable until migrated, and Lattice writes only headings: `<leader>lt` inserts `## TODO x` at the enclosing heading's level after its subtree (Org's `C-S-RET`), `<leader>ld` inserts `## WAITING x` with `:ASSIGNED:`, and cycling never gives a plain list item a state.
+
+### D15. Blank lines between a heading and its metadata — Adapted (2026-11-03)
+
+Found while testing in LazyVim: saving a note runs a Markdown formatter that inserts a blank line after every heading (markdownlint MD022, Prettier), which would cut a drawer or planning line off from its heading under Org's rule that they follow the headline directly. Lattice therefore skips blank lines between a heading, its planning lines and its drawer, but only when the next non-blank line is metadata; prose still ends the metadata. Lattice itself writes metadata directly under the heading.
+
 ## Compatibility classification (§2.2)
 
 | Feature | Category |
 |---------|----------|
 | TODO keywords on headings | Adapted (`#` for `*`) |
-| Checkbox tasks with workflow states | Extended |
-| Keyword bullets without a box | Extended |
+| Checkbox tasks with workflow states | Unsupported (as in Org; D14) |
+| Keyword bullets without a box | Legacy v0.1, read only |
 | Multi-word states | Extended |
 | SCHEDULED, DEADLINE, CLOSED, repeaters | Direct |
-| Planning and properties on checkboxes | Extended |
+| Planning and properties on checkboxes | Unsupported (as in Org) |
 | `[#A]` priorities on headings | Direct |
-| `:PRIORITY:` and `:TAGS:` on checkboxes | Extended |
+| `:PRIORITY:` and `:TAGS:` on checkboxes | Unsupported (as in Org) |
 | Trailing `:tag:` on headings, inheritance | Direct |
-| Property drawers | Direct (heading), Extended (checkbox) |
+| Property drawers | Direct (headings only); blank lines before them allowed (Adapted, D15) |
 | Progress cookies | Direct |
-| Automatic parent checkbox completion | Extended (Lattice policy) |
+| Parent checkbox follows children (`[-]`, `[X]`) | Direct (milestone D) |
+| Checkbox progress counted for headings | Direct |
 | Org Babel, tables, links, export, clocking | Unsupported |

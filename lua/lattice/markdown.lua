@@ -152,10 +152,17 @@ function M.parse(lines)
         entry.text_col = #line
         entry.text = ""
       end
-      -- "- [ ]" with nothing after it is an empty task item, not text.
-      local bare = not entry.checkbox and entry.text:match("^%[([ xX])%]$")
+      -- "- [ ]" with nothing after it is an empty task item, not text, and
+      -- "[-]" is Org's partly-checked box, which Markdown does not know.
+      local bare = not entry.checkbox and entry.text:match("^%[([ xX%-])%]$")
+      local partial, rest = nil, nil
+      if not entry.checkbox then
+        partial, rest = entry.text:match("^%[(%-)%][ \t]+(.*)$")
+      end
       if bare then
         entry.checkbox, entry.text = bare, ""
+      elseif partial then
+        entry.checkbox, entry.text = partial, rest
       end
       result.items[#result.items + 1] = entry
       item = #result.items

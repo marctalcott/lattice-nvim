@@ -1,10 +1,13 @@
 -- Planning lines and property drawers (LATTICE_SYNTAX_SPEC §3.4, §3.5, §7).
 --
--- Metadata sits directly below a task's title line: for a heading, the
--- lines after it; for a list item, the item's own continuation lines,
--- before its first child item. Reading stops at the first line that is
--- neither a planning line nor part of a drawer, so prose that merely looks
--- like metadata further down is never read (§13.3 rule 2).
+-- Metadata sits directly below a heading. Reading stops at the first line
+-- that is neither a planning line nor part of a drawer, so prose that
+-- merely looks like metadata further down is never read (§13.3 rule 2).
+--
+-- Adapted from Org: blank lines may separate the heading, its planning
+-- lines and its drawer, because Markdown formatters (markdownlint MD022,
+-- Prettier) insert a blank line after every heading. A blank line is
+-- skipped only when the next non-blank line is metadata.
 local timestamp = require("lattice.timestamp")
 
 local M = {}
@@ -35,8 +38,25 @@ end
 function M.read(lines, first, last, diagnose)
   local meta = { properties = {}, names = {}, planning_lines = {}, last = first - 1 }
   local i = first
+  local function trimmed(n)
+    return vim.trim((lines[n] or ""):gsub("\r$", ""))
+  end
+  local function starts_metadata(text)
+    return planning_pairs(text) ~= nil or text:upper() == ":PROPERTIES:"
+  end
   while i <= last do
-    local text = vim.trim((lines[i] or ""):gsub("\r$", ""))
+    local text = trimmed(i)
+    if text == "" then
+      local j = i
+      while j <= last and trimmed(j) == "" do
+        j = j + 1
+      end
+      if j > last or not starts_metadata(trimmed(j)) then
+        break
+      end
+      i = j
+      text = trimmed(i)
+    end
     local found = planning_pairs(text)
     if found then
       for _, pair in ipairs(found) do

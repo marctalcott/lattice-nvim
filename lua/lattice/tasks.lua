@@ -87,14 +87,6 @@ local function split_tags(text)
   return before, list
 end
 
-local function word_list(value)
-  local list = {}
-  for word in (value or ""):gsub(":", " "):gmatch("%S+") do
-    list[#list + 1] = word
-  end
-  return list
-end
-
 -- v0.1 inline dates: [due:YYYY-MM-DD], and [promised:...] on waiting items.
 local function legacy_dates(text, waiting, bad)
   local dates = {}
@@ -322,9 +314,13 @@ function M.parse(lines, cfg)
       last = first_child_item[entry.item] and first_child_item[entry.item] - 1 or node.stop
     end
 
-    local meta = metadata.read(lines, first, last, function(line, category, message)
-      warn(line, category, message)
-    end)
+    -- Org metadata belongs to headings only (strict Org, D14).
+    local meta = { properties = {}, names = {}, planning_lines = {} }
+    if entry.heading then
+      meta = metadata.read(lines, first, last, function(line, category, message)
+        warn(line, category, message)
+      end)
+    end
 
     -- Effective properties: inherited, then this node's own.
     local props = {}
@@ -339,8 +335,6 @@ function M.parse(lines, cfg)
     local own_tags = {}
     if entry.heading then
       text, own_tags = split_tags(text)
-    else
-      own_tags = word_list(meta.properties.TAGS)
     end
     local inherited_tags = inherit.tags and parent_ctx.tags or {}
 
@@ -394,54 +388,21 @@ function M.parse(lines, cfg)
           warn(node.line, "unknown-state", ("%s is not a state in this heading's workflow (%s)"):format(word, workflow_name))
         end
       end
-    else
-      local explicit = meta.properties.STATE
-      if (node.checkbox or state or explicit or legacy_plain) and title ~= "" then
-        task = new_task("checkbox", node.line, node.stop)
-        task.checkbox = node.checkbox
-        task.ordered = node.ordered
-        task.keyword = state
-        local default_open, default_done = default_states(kws)
-        if explicit then
-          explicit = vim.trim(explicit)
-          if state and state ~= explicit then
-            warn(node.line, "state-conflict", ("the item says %s but :STATE: is %s; using %s"):format(state, explicit, explicit))
-          end
-          if not kws.states[explicit] then
-            warn(node.line, "unknown-state", (":STATE: %s is not a state in this item's workflow (%s)"):format(explicit, workflow_name))
-          end
-          state = explicit
-        end
-        if not state and legacy_plain then
-          legacy_waiting = true
-        end
-        if node.checkbox then
-          local checked = node.checkbox ~= " "
-          task.done = checked -- the box is basic completion (§3.3 rule 1)
-          if state then
-            local kind = kws.states[state]
-            if kind and (kind == "done") ~= checked then
-              warn(
-                node.line,
-                "state-conflict",
-                ("%s is %s but the box is %s"):format(
-                  state,
-                  kind == "done" and "a done state" or "an unfinished state",
-                  checked and "checked" or "unchecked"
-                )
-              )
-            end
-          else
-            state = checked and default_done or (legacy_waiting and kws.states.WAITING and "WAITING") or default_open
-          end
-        else
-          if not state and legacy_waiting then
-            state = kws.states.WAITING and "WAITING" or default_open
-          end
-          task.done = kws.states[state] == "done"
-        end
-        task.state = state
+    elseif title ~= "" and not node.ordered and (state or legacy_plain) then
+      -- Org has no list-item tasks; these are Lattice v0.1 forms, read until
+      -- the note is migrated (ORG_MARKDOWN_PLAN.md D3, D14).
+      task = new_task("item", node.line, node.stop)
+      task.checkbox = node.checkbox
+      task.keyword = state
+      local _, default_done = default_states(kws)
+      if not state then
+        legacy_waiting = true
+        state = node.checkbox and node.checkbox ~= " " and default_done or (kws.states.WAITING and "WAITING") or kws.first_open
       end
+      task.state = state
+      -- v0.1: a checked box or a done state means done.
+      task.done = (node.checkbox ~= nil and node.checkbox ~= " ") or kws.states[state] == "done"
+      result.legacy[#result.legacy + 1] = { line = node.line, form = state == task.keyword and "TODO bullet" or "Waiting On item" }
     end
 
     if task then
@@ -453,7 +414,7 @@ function M.parse(lines, cfg)
       end
       source_of[index] = entry
 
-      -- Priority (§5): [#A] after a heading's state; :PRIORITY: otherwise.
+      -- Priority (§5): the [#A] cookie after a heading's state, as in Org.
       if entry.heading then
         local value, rest = title:match("^%[#(%w)%]%s*(.*)$")
         if value then
@@ -465,16 +426,6 @@ function M.parse(lines, cfg)
           end
         end
       end
-      local prop_priority = meta.properties.PRIORITY
-      if prop_priority and prop_priority ~= "" then
-        prop_priority = vim.trim(prop_priority):gsub("^%[?#?", ""):gsub("%]$", "")
-        if priority_ok[prop_priority] then
-          task.priority = task.priority or prop_priority
-        else
-          warn(node.line, "invalid-priority", (":PRIORITY: %s is not a configured priority"):format(prop_priority))
-        end
-      end
-
       -- v0.1 forms: @Name on waiting items, [due:] and [promised:].
       -- v0.1: every task in a Waiting On section is a waiting item.
       local waiting = state == "WAITING" or in_waiting
@@ -497,9 +448,7 @@ function M.parse(lines, cfg)
         task.legacy.promised = dates.promised
         result.legacy[#result.legacy + 1] = { line = node.line, form = "[promised:]" }
       end
-      if in_waiting then
-        result.legacy[#result.legacy + 1] = { line = node.line, form = "Waiting On section" }
-      end
+
       if not task.done then
         for _, entry_bad in ipairs(bad) do
           entry_bad.line = node.line
@@ -561,6 +510,49 @@ function M.parse(lines, cfg)
     if parent then
       task.parent = parent
       table.insert(result.tasks[parent].children, index)
+    end
+  end
+
+  -- Progress (§11.4), as Org counts it for a heading's [1/3] / [33%%]
+  -- cookie: the checkboxes of the lists directly in its entry (top-level
+  -- items only, org-checkbox-hierarchical-statistics), else its child TODO
+  -- headings (org-hierarchical-todo-statistics). "[-]" is partly done.
+  local boxes = {}
+  for _, item in ipairs(structure.items) do
+    if item.checkbox and not item.parent and item.heading then
+      local count = boxes[item.heading] or { done = 0, total = 0 }
+      count.total = count.total + 1
+      if item.checkbox == "x" or item.checkbox == "X" then
+        count.done = count.done + 1
+      end
+      boxes[item.heading] = count
+    end
+  end
+  for index, task in ipairs(result.tasks) do
+    local entry = source_of[index]
+    if entry.heading then
+      local count = boxes[entry.heading]
+      if count then
+        task.progress = { done = count.done, total = count.total, of = "checkboxes" }
+      else
+        local done, total = 0, 0
+        for _, child in ipairs(task.children) do
+          if result.tasks[child].kind == "heading" then
+            total = total + 1
+            done = done + (result.tasks[child].done and 1 or 0)
+          end
+        end
+        if total > 0 then
+          task.progress = { done = done, total = total, of = "subtasks" }
+        end
+      end
+      local a, b = task.title:match("%[(%d*)/(%d*)%]")
+      local pct = task.title:match("%[(%d*)%%%]")
+      if a then
+        task.cookie = { kind = "fraction", text = ("[%s/%s]"):format(a, b) }
+      elseif pct then
+        task.cookie = { kind = "percent", text = ("[%s%%]"):format(pct) }
+      end
     end
   end
 

@@ -284,10 +284,10 @@ local function help_lines(keymaps)
     "  :Lattice            Open the dashboard",
     "  :LatticeRefresh     Rescan notes and reread .lattice.json",
     "  :LatticeHealth      Show config, unreadable files, invalid dates",
-    "  :LatticeAddTodo     Add a TODO item below the cursor",
-    "  :LatticeAddWaiting  Add an item under Waiting On in the current note",
-    "  :LatticeNextState   Move the item under the cursor to its next state",
-    "  :LatticePrevState   Move the item under the cursor to its previous state",
+    "  :LatticeAddTodo     Add a ## TODO heading",
+    "  :LatticeAddWaiting  Add a ## WAITING heading",
+    "  :LatticeNextState   Move the heading under the cursor to its next state",
+    "  :LatticePrevState   Move the heading under the cursor to its previous state",
   }
   if keymaps then
     local mapped = {}
@@ -392,8 +392,8 @@ function M.render(result, today, opts)
     local headings = result.headings or defaults.headings
     local sequences = (result.keywords or defaults.keywords).sequences
     add("No open tasks found.", "Title")
-    add("  Lattice lists checkboxes (- [ ] …) and headings or bullets that start")
-    add(('  with a state (%s), such as "## TODO Plan".'):format(table.concat(sequences, "; ")))
+    add(('  As in Org-mode, tasks are headings that start with a state (%s),'):format(table.concat(sequences, "; ")))
+    add('  such as "## TODO Plan". Checkboxes are steps inside a task.')
     add("")
   end
 

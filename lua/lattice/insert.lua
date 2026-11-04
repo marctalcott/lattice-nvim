@@ -2,6 +2,7 @@
 local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
 local keywords = require("lattice.keywords")
+local markdown = require("lattice.markdown")
 local tasks = require("lattice.tasks")
 
 local M = {}
@@ -48,65 +49,6 @@ local function load_config()
   return cfg
 end
 
---- Chooses among several sections of the same kind, relative to the 1-based
---- cursor line: the section containing the cursor; else the nearest one that
---- starts above it; else the first one below it.
---- @param sections { line: integer, stop: integer }[]  in file order
-function M.pick_section(sections, cursor)
-  local above
-  for _, section in ipairs(sections) do
-    if cursor >= section.line and cursor <= section.stop then
-      return section
-    end
-    if section.line < cursor then
-      above = section
-    end
-  end
-  return above or sections[1]
-end
-
---- Sections of `kind` in the buffer, in file order.
-local function find_sections(lines, kind, cfg)
-  local parsed = parse(lines, cfg)
-  local found = {}
-  for _, section in ipairs(parsed.sections) do
-    if section.kind == kind then
-      found[#found + 1] = section
-    end
-  end
-  return found
-end
-
---- Adds `entry` at the end of the chosen section (after its last non-blank
---- line). Returns the new 1-based line, or nil, changing nothing, when the
---- section is missing.
-function M.insert(buf, kind, entry, cfg, cursor)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local sections = find_sections(lines, kind, cfg)
-  if #sections == 0 then
-    return nil
-  end
-  local section = M.pick_section(sections, cursor or 1)
-  vim.api.nvim_buf_set_lines(buf, section.last, section.last, false, { entry })
-  return section.last + 1
-end
-
---- Appends a new `## <heading>` section with `entry` at the end of the note.
---- Returns the entry's 1-based line.
-function M.append_section(buf, kind, entry, cfg)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local block = { "## " .. cfg.headings[kind], entry }
-  if #lines == 1 and lines[1] == "" then
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, block)
-    return 2
-  end
-  if vim.trim(lines[#lines]) ~= "" then
-    table.insert(block, 1, "")
-  end
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, block)
-  return #lines + #block
-end
-
 --- Warns when the entry at `line` is not read back as a task, which happens
 --- when it lands inside a code block (for example one that is never closed).
 function M.check_visible(buf, line, cfg)
@@ -120,54 +62,65 @@ function M.check_visible(buf, line, cfg)
   return false
 end
 
-local function confirm(question, on_yes)
-  vim.ui.select({ "Yes", "No" }, { prompt = question }, function(choice)
-    if choice == "Yes" then
-      on_yes()
-    end
-  end)
-end
-
---- Adds "- <KEYWORD> <text>" below `cursor`, using the note's first open
---- keyword (from its front matter, else the root sequences). On a list item
---- it matches that item's indent and goes after the item's sub-bullets;
---- inside front matter it goes just after it. Returns the new 1-based line,
---- or nil and an error.
-function M.insert_todo(buf, text, cfg, cursor)
+--- Inserts an Org heading task, "<hashes> <STATE> <text>", plus any
+--- `drawer` lines below it. Like Org's C-S-RET, the new heading takes the
+--- level of the heading the cursor is in and goes after that heading's
+--- subtree; with no heading above the cursor it is a level-2 heading on
+--- the line below (after any front matter). Blank lines keep headings
+--- apart, as Markdown linters expect.
+--- Returns the heading's 1-based line, or nil and an error.
+function M.insert_heading(buf, state, text, cfg, cursor, drawer)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local structure, err = markdown.parse(lines)
+  if not structure then
+    return nil, err
+  end
   local parsed = parse(lines, cfg)
-  if parsed.failed then
-    return nil, "the Markdown parser is unavailable"
-  end
-  local keyword = parsed.keywords.first_open
-  if not keyword then
-    return nil, "this note's keyword sequences have no open state (a word before |)"
-  end
-  local _, _, front_end = keywords.front_matter(lines)
-  cursor = math.max(cursor, front_end)
-  local indent = (lines[cursor] or ""):match("^([ \t]*)[-*+][ \t]")
-  local entry = ("%s- %s %s"):format(indent or "", keyword, text)
-  if #lines == 1 and lines[1] == "" then
-    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { entry })
-    return 1
-  end
-  local after = cursor
-  if indent then
-    -- Go past the item's sub-bullets and continuation lines, so they stay
-    -- with their own item rather than moving under the new one.
-    local width = vim.fn.strdisplaywidth(indent)
-    for i = cursor + 1, #lines do
-      local line = lines[i]
-      if line:match("%S") then
-        if vim.fn.strdisplaywidth(line:match("^[ \t]*")) <= width then
-          break
-        end
-        after = i
-      end
+  cursor = math.max(cursor, structure.front_matter)
+
+  local enclosing
+  for _, heading in ipairs(structure.headings) do
+    if heading.line <= cursor and heading.stop >= cursor then
+      enclosing = heading -- the innermost wins: headings come in order
     end
   end
-  vim.api.nvim_buf_set_lines(buf, after, after, false, { entry })
-  return after + 1
+
+  local kws = enclosing and parsed.keywords_at[enclosing.line] or parsed.keywords
+  if state == "first_open" then
+    state = kws.first_open
+    if not state then
+      return nil, "this note's workflow has no active state"
+    end
+  elseif not kws.states[state] then
+    return nil, ("this note's workflow has no %s state"):format(state)
+  end
+
+  local level = enclosing and enclosing.level or 2
+  local after = enclosing and enclosing.stop or cursor
+  if #lines == 1 and lines[1] == "" then
+    after = 0
+  end
+  while after > 0 and vim.trim(lines[after] or "") == "" and (not enclosing or after > enclosing.line) do
+    after = after - 1
+  end
+
+  local block = { ("%s %s %s"):format(("#"):rep(level), state, text) }
+  vim.list_extend(block, drawer or {})
+  local heading_line = after + 1
+  if after > 0 then
+    table.insert(block, 1, "")
+    heading_line = after + 2
+  end
+  local next_line = lines[after + 1]
+  if next_line ~= nil and vim.trim(next_line) ~= "" then
+    block[#block + 1] = ""
+  end
+  if #lines == 1 and lines[1] == "" then
+    vim.api.nvim_buf_set_lines(buf, 0, 1, false, block)
+  else
+    vim.api.nvim_buf_set_lines(buf, after, after, false, block)
+  end
+  return heading_line
 end
 
 -- The state after `current` (nil = no keyword) in `direction` (1 forward,
@@ -252,7 +205,18 @@ function M.cycle(buf, row, cfg, direction)
   if #kws.cycles == 0 then
     return nil, "this note has no keyword sequences"
   end
-  local new_line, start, stop, state, inserted = M.cycle_line(lines[row], kws, direction)
+  local line = lines[row]
+  if not line:match("^ ? ? ?#") then
+    -- Org has no list-item tasks. A Lattice v0.1 keyword bullet can still
+    -- change or drop its state, but a plain item never gains one.
+    local _, text = item_parts(line)
+    local word = text and text:match("^%[[ xX]%][ \t]+(%S.*)$") or text
+    local has_state = word and tasks.split_state(word, kws) ~= nil
+    if text and not has_state then
+      return nil, "list items aren't tasks in Org; put the cursor on a heading (## TODO …), or use <leader>lt to add one"
+    end
+  end
+  local new_line, start, stop, state, inserted = M.cycle_line(line, kws, direction)
   if not new_line then
     return nil, start
   end
@@ -301,29 +265,6 @@ local function usable(buf)
   return true
 end
 
--- Inserts a Waiting On item once all prompts are answered. The cursor line
--- is captured when the command starts, so the choice of section matches
--- what the user saw.
-local function finish_waiting(buf, entry, cursor)
-  if not usable(buf) then
-    return
-  end
-  local cfg = load_config()
-  if not cfg then
-    return
-  end
-  local line = M.insert(buf, "waiting", entry, cfg, cursor)
-  if line then
-    M.check_visible(buf, line, cfg)
-    return
-  end
-  confirm(('This note has no "%s" heading. Add one at the end?'):format(cfg.headings.waiting), function()
-    if usable(buf) then
-      M.check_visible(buf, M.append_section(buf, "waiting", entry, cfg), cfg)
-    end
-  end)
-end
-
 -- nil means cancelled; "" means left blank.
 local function ask(label, on_value)
   vim.ui.input({ prompt = label }, function(value)
@@ -333,6 +274,25 @@ local function ask(label, on_value)
   end)
 end
 
+-- Inserts a heading once the prompts are answered. The cursor line is
+-- captured when the command starts, so the placement matches what the
+-- user saw.
+local function finish(buf, state, text, cursor, drawer)
+  if not usable(buf) then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local line, err = M.insert_heading(buf, state, text, cfg, cursor, drawer)
+  if line then
+    M.check_visible(buf, line, cfg)
+  else
+    warn(err .. "; task not added")
+  end
+end
+
 function M.add_todo()
   local buf = current_markdown_buffer()
   if not buf then
@@ -340,22 +300,14 @@ function M.add_todo()
   end
   local cursor = vim.api.nvim_win_get_cursor(0)[1]
   ask("TODO: ", function(text)
-    if text == "" or not usable(buf) then
-      return
-    end
-    local cfg = load_config()
-    if not cfg then
-      return
-    end
-    local line, err = M.insert_todo(buf, text, cfg, cursor)
-    if line then
-      M.check_visible(buf, line, cfg)
-    else
-      warn(err .. "; task not added")
+    if text ~= "" then
+      finish(buf, "first_open", text, cursor)
     end
   end)
 end
 
+--- Adds "## WAITING <text>", with an :ASSIGNED: drawer when a name is
+--- given: Org's way of tracking what others owe you.
 function M.add_waiting()
   local buf = current_markdown_buffer()
   if not buf then
@@ -363,17 +315,13 @@ function M.add_waiting()
   end
   local cursor = vim.api.nvim_win_get_cursor(0)[1]
   ask("Waiting on (name, optional): ", function(person)
-    person = person:gsub("^@", "")
-    if person ~= "" and not person:match("^%S+$") then
-      warn("the name must be one word, e.g. Raju or Asha-Lee; task not added")
-      return
-    end
-    ask("Waiting On: ", function(text)
+    person = vim.trim((person:gsub("^@", "")))
+    ask("Waiting for: ", function(text)
       if text == "" then
         return
       end
-      local entry = person ~= "" and ("- [ ] @%s %s"):format(person, text) or ("- [ ] " .. text)
-      finish_waiting(buf, entry, cursor)
+      local drawer = person ~= "" and { ":PROPERTIES:", ":ASSIGNED: " .. person, ":END:" } or nil
+      finish(buf, "WAITING", text, cursor, drawer)
     end)
   end)
 end

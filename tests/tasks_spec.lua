@@ -1,5 +1,7 @@
 -- Milestone A: Markdown structure, task identification, hierarchy
--- (LATTICE_SYNTAX_SPEC §3, §11, §13; acceptance tests PAR-001..006).
+-- (LATTICE_SYNTAX_SPEC §3, §11, §13 with Amendment 1, strict Org:
+-- only headings are tasks; checkboxes are sub-steps that count toward
+-- progress). Acceptance tests PAR-001..006.
 -- Fixtures are fictional: volcano projects, invented people.
 local H = require("helpers")
 local test, eq = H.test, H.eq
@@ -78,42 +80,43 @@ test("a heading without a state is organizational, not a task", function()
   eq(summary(parse("# Etna\n## Notes\n## todo lowercase\n## TODOS plural")), {})
 end)
 
-test("PAR-002 checkbox tasks, every marker form", function()
-  local r = parse("- [ ] Review configuration\n* [x] Complete documentation\n+ [X] Upper\n1. [ ] Numbered\n2) [ ] Paren")
-  eq(summary(r), {
-    "checkbox TODO Review configuration",
-    "checkbox DONE Complete documentation",
-    "checkbox DONE Upper",
-    "checkbox TODO Numbered",
-    "checkbox TODO Paren",
-  })
-  eq({ r.tasks[1].done, r.tasks[2].done, r.tasks[3].done }, { false, true, true })
-  eq(r.tasks[4].ordered, true)
+test("PAR-002 checkboxes are not tasks in Org; they count toward the heading's progress", function()
+  local r = parse("## TODO Release [1/3]\n- [ ] Review configuration\n* [x] Complete documentation\n1. [ ] Numbered\n   - [x] nested, not counted")
+  eq(summary(r), { "heading TODO Release [1/3]" })
+  eq(r.tasks[1].progress, { done = 1, total = 3, of = "checkboxes" })
+  eq(r.tasks[1].cookie, { kind = "fraction", text = "[1/3]" })
 end)
 
-test("a checkbox may carry an inline state (Extended)", function()
-  local r = parse("- [ ] WAITING Reply from Tavren Solis\n- [x] CANCELED Old plan")
-  eq(summary(r), { "checkbox WAITING Reply from Tavren Solis", "checkbox CANCELED Old plan" })
+test("a heading with no checkboxes counts its child TODO headings", function()
+  local r = parse("## TODO Release [33%]\n### DONE Tests\n### TODO Docs\n### NEXT Notes\n#### DONE Deeper, not counted")
+  eq(r.tasks[1].progress, { done = 1, total = 3, of = "subtasks" })
+  eq(r.tasks[1].cookie, { kind = "percent", text = "[33%]" })
+end)
+
+test("Org's partly checked box [-] counts as unchecked", function()
+  local r = parse("## TODO A\n- [-] partly\n  - [x] one\n  - [ ] two\n- [X] done")
+  eq(r.tasks[1].progress, { done = 1, total = 2, of = "checkboxes" })
+  eq(assert(markdown.parse(lines("- [-] partly"))).items[1].checkbox, "-")
+end)
+
+test("plain checkboxes outside a task heading are ordinary list items", function()
+  eq(summary(parse("# Notes\n- [ ] Buy milk\n- [x] Done thing")), {})
+end)
+
+test("Lattice v0.1 keyword bullets still read, as legacy items", function()
+  local r = parse("- TODO Send update\n- [ ] NEXT Boxed\n- DONE Shipped\n- [x] TODO Checked\n1. TODO Numbered is not one\n- plain bullet")
+  eq(summary(r), { "item TODO Send update", "item NEXT Boxed", "item DONE Shipped", "item TODO Checked" })
+  -- v0.1 rules: a done state or a checked box means done.
+  eq(vim.tbl_map(function(t)
+    return t.done
+  end, r.tasks), { false, false, true, true })
+  eq(#r.legacy, 4)
   eq(r.diagnostics, {})
 end)
 
-test("a keyword bullet without a box is still a task (Extended)", function()
-  local r = parse("- TODO Send update\n- DONE Shipped\n- plain bullet")
-  eq(summary(r), { "checkbox TODO Send update", "checkbox DONE Shipped" })
-  eq({ r.tasks[1].checkbox, r.tasks[2].done }, { nil, true })
-end)
-
-test("PAR-015 checkbox and state conflict is a diagnostic; the box decides completion", function()
-  local r = parse("- [x] TODO Checked but open\n- [ ] DONE Unchecked but done")
-  eq({ r.tasks[1].done, r.tasks[2].done }, { true, false })
-  eq(#r.diagnostics, 2)
-  eq({ r.diagnostics[1].line, r.diagnostics[1].category }, { 1, "state-conflict" })
-  assert(r.diagnostics[2].message:find("unchecked", 1, true), r.diagnostics[2].message)
-end)
-
 test("PAR-006 fenced and indented code produce no tasks", function()
-  local r = parse("```\n- [ ] in fence\n## TODO in fence\n```\n\n    - [ ] indented code\n~~~md\n- TODO tilde\n~~~\n- [ ] real")
-  eq(summary(r), { "checkbox TODO real" })
+  local r = parse("```\n## TODO in fence\n- TODO fenced bullet\n```\n\n    ## TODO indented code\n~~~md\n## TODO tilde\n~~~\n## TODO real")
+  eq(summary(r), { "heading TODO real" })
 end)
 
 test("multi-word states match longest first", function()
@@ -123,8 +126,8 @@ test("multi-word states match longest first", function()
 end)
 
 test("front matter todo: still sets the note's states", function()
-  local r = parse("---\ntodo: ASK | ANSWERED\n---\n- ASK Headcount\n- TODO not a state here")
-  eq(summary(r), { "checkbox ASK Headcount" })
+  local r = parse("---\ntodo: ASK | ANSWERED\n---\n## ASK Headcount\n## TODO not a state here")
+  eq(summary(r), { "heading ASK Headcount" })
 end)
 
 -- Hierarchy (PAR-003, PAR-004, PAR-005, §15.4) ---------------------------------
@@ -137,22 +140,19 @@ test("PAR-003 nested headings: subtree runs to the next heading of equal or high
 end)
 
 test("an organizational heading between tasks is skipped in the tree", function()
-  local r = parse("## TODO Outer\n### Notes\n- [ ] inner")
+  local r = parse("## TODO Outer\n### Notes\n#### TODO inner")
   eq(parents(r), { "", "Outer" })
 end)
 
-test("PAR-004 nested checkboxes follow list structure, any indent width", function()
-  local r = parse("- [ ] Prepare release\n    - [x] Complete tests\n    - [ ] Review documentation\n        - [ ] Deep")
-  eq(parents(r), { "", "Prepare release", "Prepare release", "Review documentation" })
-  eq(r.tasks[1].source.end_line, 4)
+test("PAR-004 checkbox nesting follows list structure, any indent width", function()
+  local s = assert(markdown.parse(lines("- [ ] Prepare release\n    - [x] Complete tests\n    - [ ] Review documentation\n        - [ ] Deep")))
+  eq(vim.tbl_map(function(item)
+    return item.parent or 0
+  end, s.items), { 0, 1, 1, 3 })
+  eq(s.items[1].stop, 4)
 end)
 
-test("a plain bullet between checkboxes is looked through", function()
-  local r = parse("- [ ] Parent\n  - grouping text\n    - [ ] Grandchild")
-  eq(parents(r), { "", "Parent" })
-end)
-
-test("PAR-005 mixed hierarchy, and the §15.4 fixture", function()
+test("PAR-005 mixed hierarchy: the §15.4 fixture under strict Org", function()
   local r = parse(table.concat({
     "# Vesuvius",
     "## TODO Prepare release",
@@ -161,28 +161,15 @@ test("PAR-005 mixed hierarchy, and the §15.4 fixture", function()
     "  - [ ] Review integration tests",
     "- [ ] Prepare documentation",
   }, "\n"))
-  eq(summary(r), {
-    "heading TODO Prepare release",
-    "checkbox TODO Complete validation [1/2]",
-    "checkbox DONE Review unit tests",
-    "checkbox TODO Review integration tests",
-    "checkbox TODO Prepare documentation",
-  })
-  eq(parents(r), { "", "Prepare release", "Complete validation [1/2]", "Complete validation [1/2]", "Prepare release" })
-  eq(r.tasks[2].children, { 3, 4 })
-  eq(r.tasks[2].done, false)
+  -- The heading is the task; its two top-level boxes are its progress.
+  eq(summary(r), { "heading TODO Prepare release" })
+  eq(r.tasks[1].progress, { done = 0, total = 2, of = "checkboxes" })
+  eq(r.tasks[1].done, false)
 end)
 
-test("metadata lines stay inside their own item (§3.4 ownership)", function()
-  local r = parse(table.concat({
-    "- [ ] First",
-    "  SCHEDULED: <2026-11-05 Thu>",
-    "  :PROPERTIES:",
-    "  :ASSIGNED: Tavren Solis",
-    "  :END:",
-    "- [ ] Second",
-  }, "\n"))
-  eq({ r.tasks[1].source, r.tasks[2].source }, { { start_line = 1, end_line = 5 }, { start_line = 6, end_line = 6 } })
+test("a v0.1 item under a heading task is its child", function()
+  local r = parse("## TODO Plan\n- TODO legacy step")
+  eq(parents(r), { "", "Plan" })
 end)
 
 test("parsing is deterministic", function()
