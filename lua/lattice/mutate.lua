@@ -134,6 +134,13 @@ end
 --- first planning line in Org's order (CLOSED, DEADLINE, SCHEDULED), or
 --- starts one directly under the heading. A line left empty is removed.
 --- `structure` may be passed when the caller already parsed these lines.
+---
+--- Refuses, changing nothing, when the heading has more than one entry for
+--- `keyword` (which one is meant is unclear, and the rest would be left
+--- behind), or when replacing one Lattice can't read (it may carry a
+--- repeater or warning the user wrote). Removing a single unreadable entry
+--- is allowed. Every planning edit comes through here, so every command
+--- follows these rules.
 function M.set_planning(lines, line, keyword, raw, structure)
   structure = structure or parse_structure(lines)
   local _, index = heading_at(structure, line)
@@ -141,6 +148,13 @@ function M.set_planning(lines, line, keyword, raw, structure)
     return nil, "no heading on this line"
   end
   local meta = heading_meta(lines, structure, index)
+  local written = written_planning(lines, meta.planning_lines, keyword)
+  if #written > 1 then
+    return nil, ("this heading has %d %s entries; keep one, then try again"):format(#written, keyword)
+  end
+  if raw and written[1] and not timestamp.parse(written[1]) then
+    return nil, ("this heading's %s %s can't be read (see WARNINGS); fix or remove it first"):format(keyword, written[1])
+  end
   lines = copy(lines)
   for _, at in ipairs(meta.planning_lines) do
     local indent = lines[at]:match("^(%s*)")
@@ -191,24 +205,11 @@ function M.set_date(lines, line, keyword, when)
   if not index then
     return nil, "no heading on this line"
   end
-  local meta = heading_meta(lines, structure, index)
-  local written = written_planning(lines, meta.planning_lines, keyword)
-  -- set_planning rewrites the first entry. With several, or one Lattice
-  -- can't read, that would drop text the user wrote, so say so instead.
-  if #written > 1 then
-    return nil, ("this heading has %d %s entries; keep one, then try again"):format(#written, keyword)
-  end
-  local existing = meta[keyword:lower()]
-  if written[1] and not existing then
-    local inactive_ts = timestamp.parse(written[1])
-    if inactive_ts then
-      -- Inactive [..]: readable, just ignored. Rescheduling makes it active
-      -- and keeps its repeater and warning.
-      existing = inactive_ts
-    else
-      return nil, ("this heading's %s %s can't be read (see WARNINGS); fix or remove it first"):format(keyword, written[1])
-    end
-  end
+  -- The entry as written, active or inactive (rescheduling an inactive
+  -- one makes it active). set_planning refuses duplicates and unreadable
+  -- entries.
+  local written = written_planning(lines, heading_meta(lines, structure, index).planning_lines, keyword)
+  local existing = written[1] and timestamp.parse(written[1])
   local ts, err = timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">")
   if not ts then
     return nil, err
@@ -441,10 +442,14 @@ end
 ---     or child tasks are open;
 ---   * parent cookies that count child tasks are updated.
 --- Returns new lines and a message for the user, or nil and an error.
-function M.set_state(lines, cfg, line, new, now)
+--- `parsed` may be passed when the caller already parsed these lines.
+function M.set_state(lines, cfg, line, new, now, parsed)
   now = now or M.now()
   local opts = settings(cfg)
-  local parsed, err = tasks.parse(lines, cfg)
+  local err
+  if not parsed then
+    parsed, err = tasks.parse(lines, cfg)
+  end
   if not parsed then
     return nil, err
   end
@@ -524,7 +529,10 @@ function M.set_state(lines, cfg, line, new, now)
     end
     out = set_word(back, out)
     for field, ts in pairs(changes) do
-      out = assert(M.set_planning(out, line, field:upper(), ts.raw))
+      out, err = M.set_planning(out, line, field:upper(), ts.raw)
+      if not out then
+        return nil, err
+      end
     end
     if opts.logging["repeat"] == "time" then
       out = assert(M.set_property(out, line, "LAST_REPEAT", inactive(now)))
@@ -539,12 +547,19 @@ function M.set_state(lines, cfg, line, new, now)
     -- Only the heading's text changed, so the structure still fits.
     out = set_word(new, out)
     if done and not was_done and opts.logging.done == "time" then
-      out = assert(M.set_planning(out, line, "CLOSED", inactive(now), structure))
+      out, err = M.set_planning(out, line, "CLOSED", inactive(now), structure)
     elseif was_done and not done then
-      out = assert(M.set_planning(out, line, "CLOSED", nil, structure))
+      out, err = M.set_planning(out, line, "CLOSED", nil, structure)
+    end
+    if not out then
+      return nil, err
     end
   end
-  if structure.headings[index].parent then
+  -- Parent cookies count child tasks and how many are done, so they change
+  -- only when this heading gains or loses a state, or becomes done or stops
+  -- being done (a repeat stays open).
+  local counted = done ~= was_done or (old == nil) ~= (new == nil)
+  if structure.headings[index].parent and counted and not changes then
     out = M.update_progress(out, structure.headings[structure.headings[index].parent].line, cfg)
   end
   return out, message
@@ -555,12 +570,13 @@ end
 --- Raises (direction 1) or lowers (-1) the heading's [#X] cookie, Org
 --- style: no cookie starts at the default; going past the highest or
 --- lowest value removes it.
-function M.shift_priority(lines, cfg, line, direction)
-  local structure = parse_structure(lines)
+--- `parsed` may be passed when the caller already parsed these lines.
+function M.shift_priority(lines, cfg, line, direction, parsed)
+  parsed = parsed or tasks.parse(lines, cfg)
+  local structure = parsed and parsed.structure or parse_structure(lines)
   if not heading_at(structure, line) then
     return nil, "put the cursor on a heading"
   end
-  local parsed = tasks.parse(lines, cfg)
   local kws = parsed and parsed.keywords_at[line] or cfg.keywords
   local prefix, state, rest = split_heading(lines[line], kws)
   if not prefix or rest == "" then
@@ -811,9 +827,10 @@ function M.migrate(lines, cfg)
     if task.kind == "heading" then
       count = count + 1 -- items are counted by convert()
       local legacy = task.legacy
-      -- Removes the first "[tag:value]" with exactly this value.
+      -- Removes every "[tag:value]" with exactly this value (a repeated
+      -- date is one date; differing ones were refused above).
       local function drop(tag, value)
-        out[task.line] = out[task.line]:gsub("[ \t]*%[" .. tag .. ":" .. vim.pesc(value) .. "%]", "", 1)
+        out[task.line] = out[task.line]:gsub("[ \t]*%[" .. tag .. ":" .. vim.pesc(value) .. "%]", "")
       end
       if legacy.due then
         drop("due", legacy.due)

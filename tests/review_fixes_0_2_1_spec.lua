@@ -335,7 +335,7 @@ test("archiving a buffer that has no file is refused", function()
   eq(buffer_text(), "## DONE x")
 end)
 
-test("dashboard edits and Enter on an unchanged note parse it at most once", function()
+test("a dashboard edit parses the note once: locate's parse is reused by the edit", function()
   local markdown = require("lattice.markdown")
   local calls = 0
   local parse = markdown.parse
@@ -343,7 +343,11 @@ test("dashboard edits and Enter on an unchanged note parse it at most once", fun
     calls = calls + 1
     return parse(...)
   end
-  local line = dashboard.locate(L("# A\n## TODO Call"), { line = 2, title = "Call", raw = "## TODO Call", twins = 1 }, DEFAULT)
-  markdown.parse = parse
+  local lines = L("# A\n## TODO Call")
+  local line, parsed = dashboard.locate(lines, { line = 2, title = "Call", twins = 1 }, DEFAULT)
   eq({ line, calls }, { 2, 1 })
+  assert(mutate.shift_priority(lines, DEFAULT, line, 1, parsed))
+  assert(mutate.set_state(lines, DEFAULT, line, "NEXT", nil, parsed))
+  markdown.parse = parse
+  eq(calls, 1)
 end)

@@ -131,3 +131,32 @@ test("the same [due:] date written twice is not a conflict", function()
   eq({ count, #skipped }, { 1, 0 })
   eq(T(out), "# Notes\n\n## TODO pay\nDEADLINE: <2026-11-10 Tue>")
 end)
+
+-- Review of 0.2.5 ---------------------------------------------------------------------
+
+test("completing a repeat refuses a heading with two SCHEDULED entries instead of overwriting one", function()
+  local lines = L("## TODO w\nSCHEDULED: [2026-09-01 Tue] SCHEDULED: <2026-10-01 Thu +1d>")
+  local out, err = mutate.set_state(lines, DEFAULT, 1, "DONE", { date = "2026-10-01", time = "09:00" })
+  eq({ out, err }, { nil, "this heading has 2 SCHEDULED entries; keep one, then try again" })
+end)
+
+test("removing a date refuses a heading with two entries; a single unreadable one can be removed", function()
+  local _, err = mutate.set_date(L("## TODO w\nSCHEDULED: <bad> SCHEDULED: <2026-10-01 Thu>"), 1, "SCHEDULED", nil)
+  eq(err, "this heading has 2 SCHEDULED entries; keep one, then try again")
+  eq(T(assert(mutate.set_date(L("## TODO w\nSCHEDULED: <bad>"), 1, "SCHEDULED", nil))), "## TODO w")
+end)
+
+test("migrating a heading removes every copy of a repeated [due:] or [promised:]", function()
+  local out, count = mutate.migrate(L("## TODO pay [due:2026-11-10] [due:2026-11-10]"), DEFAULT)
+  eq({ T(out), count }, { "## TODO pay\nDEADLINE: <2026-11-10 Tue>", 1 })
+  local waiting = mutate.migrate(L("## WAITING @Ana ship [promised:2026-11-10] [promised:2026-11-10]"), DEFAULT)
+  eq(T(waiting), "## WAITING ship\n:PROPERTIES:\n:PROMISED: 2026-11-10\n:ASSIGNED: Ana\n:END:")
+  eq(assert(H.parser.parse(waiting, DEFAULT)).legacy, {})
+end)
+
+test("parent cookies still update when a child gains or loses its state", function()
+  local out = assert(mutate.set_state(L("## TODO Plan [0/1]\n### TODO a\n### b"), DEFAULT, 3, "TODO"))
+  eq(out[1], "## TODO Plan [0/2]")
+  out = assert(mutate.set_state(out, DEFAULT, 2, ""))
+  eq(out[1], "## TODO Plan [0/1]")
+end)
