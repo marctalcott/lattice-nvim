@@ -46,11 +46,23 @@ local function heading_meta(lines, structure, index)
   return metadata.read(lines, heading.line + 1, math.min(last, heading.stop), function() end)
 end
 
+--- How many entries of `list` share each `key(entry)`: the `expected`
+--- count M.nearest checks, taken when a list of targets is drawn.
+function M.tally(list, key)
+  local counts = {}
+  for _, entry in ipairs(list) do
+    local k = key(entry)
+    counts[k] = (counts[k] or 0) + 1
+  end
+  return counts
+end
+
 --- The line in `matches` nearest to `line`. nil when there is none, or when
---- fewer than `expected` remain: one of several equal headings changed, so
---- which one was meant can't be told.
+--- the number of matches is not `expected` (the count when the target was
+--- shown): a heading with that text was renamed, removed or added since, so
+--- which one was meant can't be told. Refusing is safer than guessing.
 function M.nearest(matches, line, expected)
-  if expected and #matches < expected then
+  if expected and #matches ~= expected then
     return nil
   end
   local best
@@ -70,13 +82,22 @@ function M.find_heading(lines, line, text, expected)
   local matches = {}
   for _, heading in ipairs(structure.headings) do
     if heading.text == text then
-      if heading.line == line then
-        return line
-      end
       matches[#matches + 1] = heading.line
     end
   end
   return M.nearest(matches, line, expected)
+end
+
+-- A planning entry as written ("<2026-11-20 Fri>"), active, inactive or
+-- unreadable, from the heading's planning lines.
+local function written_planning(lines, planning_lines, keyword)
+  for _, at in ipairs(planning_lines or {}) do
+    for _, token in ipairs(metadata.planning_pairs(lines[at])) do
+      if token.keyword == keyword then
+        return token.raw
+      end
+    end
+  end
 end
 
 --- "Now" for completion: local date and time, unless the caller passes one.
@@ -108,8 +129,6 @@ end
 
 local ORDER = { CLOSED = 1, DEADLINE = 2, SCHEDULED = 3 }
 
--- The "KEYWORD: <ts>" tokens of a planning line, in order.
-local planning_tokens = metadata.planning_pairs
 
 local function render_planning(indent, tokens)
   local parts = {}
@@ -134,7 +153,7 @@ function M.set_planning(lines, line, keyword, raw, structure)
   lines = copy(lines)
   for _, at in ipairs(meta.planning_lines) do
     local indent = lines[at]:match("^(%s*)")
-    local tokens = planning_tokens(lines[at])
+    local tokens = metadata.planning_pairs(lines[at])
     for i, token in ipairs(tokens) do
       if token.keyword == keyword then
         if raw then
@@ -156,7 +175,7 @@ function M.set_planning(lines, line, keyword, raw, structure)
   end
   local at = meta.planning_lines[1]
   if at then
-    local tokens = planning_tokens(lines[at])
+    local tokens = metadata.planning_pairs(lines[at])
     tokens[#tokens + 1] = { keyword = keyword, raw = raw }
     table.sort(tokens, function(a, b)
       return ORDER[a.keyword] < ORDER[b.keyword]
@@ -181,7 +200,14 @@ function M.set_date(lines, line, keyword, when)
   if not index then
     return nil, "no heading on this line"
   end
-  local existing = heading_meta(lines, structure, index)[keyword:lower()]
+  local meta = heading_meta(lines, structure, index)
+  local existing = meta[keyword:lower()]
+  local written = written_planning(lines, meta.planning_lines, keyword)
+  if written and not existing then
+    -- Unreadable (or inactive): replacing it would drop whatever repeater
+    -- or warning the user wrote, so say so instead.
+    return nil, ("this heading's %s %s can't be read (see WARNINGS); fix or remove it first"):format(keyword, written)
+  end
   local ts, err = timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">")
   if not ts then
     return nil, err
@@ -693,12 +719,27 @@ function M.migrate(lines, cfg)
     return block
   end
 
+  -- Reasons any legacy task (item or heading) can't be converted.
+  local function common_blocker(task)
+    if task.title == "" then
+      if task.legacy.assigned then
+        return "its title is only @Name; add a title first"
+      end
+      return "it has no title besides its dates; add a title first"
+    end
+    for tag in pairs(task.legacy_multiple or {}) do
+      return ("it has more than one [%s:] date; keep one"):format(tag)
+    end
+  end
+
   -- Why the legacy item (and its legacy children) at `level` can't become
   -- headings without losing or reordering something, or nil.
-  local function blocker(index, level)
+  local function blocker(index, level, nested)
     local task = parsed.tasks[index]
-    if task.title == "" then
-      return "its title is only @Name; add a title first"
+    local reason = common_blocker(task)
+    if reason then
+      -- A nested item's reason names its line; "it" would read as the parent.
+      return nested and ("line %d: %s"):format(task.line, reason) or reason
     end
     if level > 6 then
       return "it would need headings deeper than ######"
@@ -708,20 +749,9 @@ function M.migrate(lines, cfg)
       if structure.items[item.parent].line ~= task.line then
         return ("line %d is inside a plain list item; move it out of that list first"):format(item.line)
       end
-      local reason = blocker(child, level + 1)
+      local reason = blocker(child, level + 1, true)
       if reason then
         return reason
-      end
-    end
-  end
-
-  -- The heading's DEADLINE as written, active or not ("<2026-11-20 Fri>").
-  local function written_deadline(task)
-    for _, at in ipairs(task.planning_lines or {}) do
-      for _, token in ipairs(planning_tokens(lines[at]) or {}) do
-        if token.keyword == "DEADLINE" then
-          return token.raw
-        end
       end
     end
   end
@@ -729,10 +759,11 @@ function M.migrate(lines, cfg)
   -- Why a heading's legacy forms can't be converted, or nil.
   local function heading_blocker(task)
     local legacy = task.legacy
-    if legacy.assigned and task.title == "" then
-      return "its title is only @Name; add a title first"
+    local reason = common_blocker(task)
+    if reason then
+      return reason
     end
-    local deadline = written_deadline(task)
+    local deadline = written_planning(lines, task.planning_lines, "DEADLINE")
     if legacy.due and deadline and not (task.deadline and task.deadline.date == legacy.due) then
       return ("its [due:%s] differs from its DEADLINE %s; keep one"):format(legacy.due, deadline)
     end

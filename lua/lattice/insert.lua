@@ -593,11 +593,10 @@ function M.refile()
   local choices = {}
   local seen_files = {}
   -- How many headings in each note share a text (mutate.find_heading).
-  local same = {}
-  for _, heading in ipairs(result.outlines or {}) do
-    local key = heading.path .. "\0" .. heading.text
-    same[key] = (same[key] or 0) + 1
+  local function text_key(heading)
+    return heading.path .. "\0" .. heading.text
   end
+  local text_counts = mutate.tally(result.outlines or {}, text_key)
   for _, heading in ipairs(result.outlines or {}) do
     if not seen_files[heading.path] then
       seen_files[heading.path] = true
@@ -608,7 +607,7 @@ function M.refile()
       path = heading.path,
       line = heading.line,
       text = heading.text,
-      same = same[heading.path .. "\0" .. heading.text],
+      same = text_counts[text_key(heading)],
     }
   end
   vim.ui.select(choices, {
@@ -620,8 +619,8 @@ function M.refile()
     if not choice or not usable(buf) then
       return
     end
-    local same = (vim.uv.fs_realpath(choice.path) or choice.path) == here
-    if same then
+    local same_note = (vim.uv.fs_realpath(choice.path) or choice.path) == here
+    if same_note then
       -- The target line may have moved if the note changed since the scan.
       local dest = choice.line and mutate.find_heading(lines, choice.line, choice.text, choice.same)
       if choice.line and not dest then

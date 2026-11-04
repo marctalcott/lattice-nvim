@@ -404,18 +404,12 @@ end
 function M.render(result, today, opts)
   opts = opts or {}
   local lines, highlights, targets = {}, {}, {}
-  -- How many tasks in each note share a title, so an edit can tell when one
-  -- of several equal titles changed (M.locate).
+  -- How many tasks in each note share a kind and title, so an edit can
+  -- tell when one of them changed (M.locate counts the same way).
   local twins
   local function twin_count(task)
-    if not twins then
-      twins = {}
-      for _, t in ipairs(result.tasks or {}) do
-        local key = (t.path or "") .. "\0" .. t.title
-        twins[key] = (twins[key] or 0) + 1
-      end
-    end
-    return twins[(task.path or "") .. "\0" .. task.title]
+    twins = twins or require("lattice.mutate").tally(result.tasks or {}, M.twin_key)
+    return twins[M.twin_key(task)]
   end
 
   local function add(line, group)
@@ -712,16 +706,33 @@ local function note_buffer(path)
   return require("lattice.mutate").note_buffer(path)
 end
 
--- The line of a task in `lines`: its recorded line while that line is
--- unchanged (no parse needed), else the nearest task of the same kind whose
+--- Tasks that M.locate can't tell apart share this key.
+function M.twin_key(task)
+  return ("%s\0%s\0%s"):format(task.path or "", task.kind or "heading", task.title)
+end
+
+-- The line of a task in `lines`: the nearest task of the same kind whose
 -- title equals `target.title`, read with `cfg`, so edits elsewhere in the
 -- note don't send Lattice to the wrong line (PAR-030). nil when none
--- matches, or when fewer tasks carry the title than when the dashboard was
--- drawn (one of several equal titles changed, so which was meant is
--- unknown). Also returns the parse, when one was needed.
+-- matches, or when the number of such tasks is not `target.twins`, the
+-- count when the dashboard was drawn: one was renamed, removed or added,
+-- so which was meant is unknown. Also returns the parse, when one was
+-- needed: a task whose title was unique, whose line is unchanged and has no
+-- copy elsewhere is found without one.
 function M.locate(lines, target, cfg)
-  if target.title == nil or (target.raw ~= nil and lines[target.line] == target.raw) then
+  if target.title == nil then
     return target.line
+  end
+  if target.raw ~= nil and lines[target.line] == target.raw and (target.twins or 1) == 1 then
+    local copies = 0
+    for _, text in ipairs(lines) do
+      if text == target.raw then
+        copies = copies + 1
+      end
+    end
+    if copies == 1 then
+      return target.line
+    end
   end
   local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
   local matches = {}

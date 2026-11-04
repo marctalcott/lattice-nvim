@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Bug fixes from a code review of the 0.2.2 fixes. No new features or settings.
+
+### Fixed
+
+- A dashboard edit could change the wrong task when two tasks in a note share a title: after one was deleted (the other moved onto its line), after a heading was duplicated with `yyP`, or after a new task with that title appeared. Rows are now found again only when exactly as many tasks carry the title as when the dashboard was drawn; otherwise the edit is refused (press `r`). Refile targets follow the same rule.
+- A heading row was always refused after an edit above it when a v0.1 bullet in the same note had the same title.
+- `:LatticeMigrate` kept only the first of two valid `[due:]` (or `[promised:]`) dates on an item and dropped the other; items and headings with more than one are now left as written and reported.
+- `:LatticeMigrate` gave "its title is only @Name" for an item whose title was only a date, and turned a heading whose title was only `[due:]` into a bare `## TODO`. Both are now left as written with "it has no title besides its dates".
+- Rescheduling a date Lattice can't read (such as `<… +0d -2d>`, or an inactive one) replaced it and lost its repeater and warning; it is now refused with a message. An empty answer still removes it.
+
 ## 0.2.3 — 2026-11-04
 
 Documentation only. No code changes.

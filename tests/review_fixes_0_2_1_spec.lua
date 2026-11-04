@@ -317,8 +317,8 @@ test("a row edit is refused when one of two tasks with the same title was rename
   -- Lines added above both: each is still found, the nearer one wins.
   local shifted = L("intro\n# A\n## TODO Call\n# B\n## TODO Call")
   eq(dashboard.locate(shifted, target, DEFAULT), 3)
-  -- An unchanged line needs no parse.
-  eq(dashboard.locate(L("x\n## TODO Call"), target, DEFAULT), 2)
+  -- With both still there, an unchanged line is found.
+  eq(dashboard.locate(L("# A\n## TODO Call\n# B\n## TODO Call"), target, DEFAULT), 2)
   eq(mutate.find_heading(L("## Plans X\n## Plans"), 1, "Plans", 2), nil)
 end)
 
