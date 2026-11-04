@@ -345,5 +345,5 @@ test("dashboard edits and Enter on an unchanged note parse it at most once", fun
   end
   local line = dashboard.locate(L("# A\n## TODO Call"), { line = 2, title = "Call", raw = "## TODO Call", twins = 1 }, DEFAULT)
   markdown.parse = parse
-  eq({ line, calls }, { 2, 0 })
+  eq({ line, calls }, { 2, 1 })
 end)

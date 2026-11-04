@@ -341,4 +341,29 @@ function M.projects(tasks, priorities)
   return list
 end
 
+-- Finding a target again ----------------------------------------------------
+-- Rows and refile targets are found again by title or text (mutate.nearest
+-- refuses when the count changed). These keys say which ones count as the
+-- same, and tally counts them when the list is drawn.
+
+--- How many entries of `list` share each `key(entry)`.
+function M.tally(list, key)
+  local counts = {}
+  for _, entry in ipairs(list) do
+    local k = key(entry)
+    counts[k] = (counts[k] or 0) + 1
+  end
+  return counts
+end
+
+--- Tasks that dashboard.locate can't tell apart: same note, kind and title.
+function M.task_key(task)
+  return ("%s\0%s\0%s"):format(task.path or "", task.kind or "heading", task.title)
+end
+
+--- Headings that mutate.find_heading can't tell apart: same note and text.
+function M.heading_key(heading)
+  return ("%s\0%s"):format(heading.path or "", heading.text)
+end
+
 return M
