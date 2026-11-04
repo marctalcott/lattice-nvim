@@ -221,6 +221,7 @@ function M.collect(root)
   end
   result.root, result.notice, result.headings, result.keywords = root, notice, cfg.headings, cfg.keywords
   result.workflows = cfg.workflows
+  result.deadlines = cfg.deadlines
   return result
 end
 

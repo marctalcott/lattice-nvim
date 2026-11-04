@@ -53,7 +53,7 @@ DEADLINE: <2026-11-05 Thu>
 :END:
 - [x] Collect requirements
 - [ ] Draft the proposal
-  SCHEDULED: <2026-11-03 Tue>
+  SCHEDULED: <2026-10-30 Fri>
 
 # Team
 
@@ -107,7 +107,8 @@ Metadata goes directly below the title: below a heading, or inside a list item, 
 
 - Tags inherit from enclosing headings and tasks (`inherit.tags`). `:PROJECT:` and `:WORKFLOW:` always inherit; other properties inherit when listed in `inherit.properties`.
 - `:ASSIGNED:` names the person shown on a row. `:STATE: WAITING` puts a task in WAITING ON.
-- The dashboard's date is the `DEADLINE`. `SCHEDULED`, repeaters (`+1w`, `++1m`, `.+1d`) and warning periods are parsed now and drive the agenda in the next milestone.
+- The dashboard's date column shows the `DEADLINE` and, after it, `sched` and the `SCHEDULED` date. See [Dashboard](#dashboard) for how they place a task in OVERDUE, TODAY and DUE SOON.
+- Repeaters follow Org exactly: `+1w` moves one interval from the current date (and can stay in the past if you're late), `++1w` moves whole intervals until the date is in the future, `.+1w` moves one interval from the day you complete it. Units are `h`, `d`, `w`, `m`, `y`. Month and year steps keep the day number and overflow like Org does, so Jan 31 `+1m` is Mar 3 (Mar 2 in a leap year). Lattice computes the next occurrence now; completing a task to apply it comes with the editing commands.
 - Problems are warnings, never silent fixes: invalid timestamps, a weekday that doesn't match its date, malformed drawers, unknown priorities, states or workflows, and duplicate `:ID:`s (within a note or across notes).
 
 ### Lattice v0.1 syntax
@@ -133,8 +134,9 @@ A command to convert a note to the Org forms is planned.
 ```
 
 - **MY TO DO** and **WAITING ON** list open tasks. Each row shows the state, priority, assignee and the task's own tags. WAITING ON holds tasks in the `WAITING` state and v0.1 `Waiting On` items. Tasks with a date come first, earliest first, so overdue items lead. Undated tasks follow. Ties are ordered by file path and line.
-- **OVERDUE** lists open tasks due before today, oldest first.
-- **DUE SOON** lists open tasks due from today through 7 days ahead, soonest first.
+- **OVERDUE** lists open tasks whose deadline (or v0.1 `[due:]`) is before today, oldest first.
+- **TODAY** is Org's daily agenda: open tasks scheduled for today, or scheduled earlier and still open (Org keeps showing those until they're done), and deadlines due today. A `SCHEDULED` delay such as `-2d` keeps a task off it for that many days after its date.
+- **DUE SOON** lists open tasks whose deadline is after today but inside its warning period: the deadline's own `-3d` / `-1w`, else `deadlines.warning_days` (default 14, as in Org). Soonest first.
 - **DONE** lists finished tasks (a done state, or a checked box), from the most recently modified note first. It shows the 20 most recent and a count of the rest.
 - A task can appear both in its owner group and in a date group. Each group's count covers only that group.
 - **INBOX** appears only if the inbox folder exists. See [Capture inbox](#capture-inbox).
@@ -242,7 +244,7 @@ This file lives in the **notes root**, not in this plugin's repository. Every fi
 | `priorities`     | `A`, `B`, `C`; default `B`     | Allowed priority values (single letters or digits, highest first) and the default used for sorting. |
 | `inherit.tags`   | `true`                         | Whether tasks inherit tags from enclosing headings and tasks |
 | `inherit.properties` | `[]`                       | Extra properties to inherit (or `true` for all). `PROJECT` and `WORKFLOW` always inherit. |
-| `deadlines.warning_days` | `14`                   | Default deadline warning period, as Org's `org-deadline-warning-days` (used by the agenda in the next milestone) |
+| `deadlines.warning_days` | `14`                   | Default deadline warning period for DUE SOON, as Org's `org-deadline-warning-days`. A deadline's own `-Nd` wins. |
 | `scan.include`   | `["**/*.md"]`                  | Files to scan. Only `.md` files are ever read.             |
 | `scan.exclude`   | `["Archives/**", ".git/**"]`   | Files and folders to skip. A list you give **replaces** the default, so keep `Archives/**` in it if you want Archives skipped. |
 | `headings.waiting` | `"Waiting On"`               | v0.1: heading whose bullets are waiting items              |
@@ -282,7 +284,7 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 - **Saved files only.** Lattice reads files from disk. A task you add or check off appears on the dashboard after you save the note and refresh.
 - **Manual refresh.** There is no file watching or background indexing. The dashboard and its line numbers reflect the last scan.
 - **Whole-tree scan.** Every refresh rescans all included notes synchronously. This is fast for typical note collections but not optimized for very large trees.
-- **Org subset, in progress.** Tasks, workflows, priorities, tags, properties and planning lines are read (milestones A and B of the spec). Scheduling and repeaters in the agenda, editing commands that keep checkboxes, `:STATE:` and progress cookies in sync, and `CLOSED` timestamps come in later milestones. Until then `<leader>ln` / `<leader>lp` change the state word on the line only.
+- **Org subset, in progress.** Tasks, workflows, priorities, tags, properties, planning lines and the scheduling engine are done (milestones A–C of the spec). Editing commands that complete tasks (advancing repeaters, adding `CLOSED`), keep checkboxes, `:STATE:` and progress cookies in sync come next, then a fuller agenda with project and priority filters. Until then `<leader>ln` / `<leader>lp` change the state word on the line only.
 - **Tree-sitter.** Lattice needs Neovim's Markdown parser, which ships with Neovim. A broken parser binary can crash Neovim when it loads; see [Troubleshooting](#troubleshooting).
 - **Symlinks** are skipped entirely (see above).
 - **Not yet built:** WBR preparation, AI-assisted commitment discovery, Portico publishing, and automated Drafts import are planned for later milestones (see [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md) §11). The dashboard doesn't show or pretend to support them.

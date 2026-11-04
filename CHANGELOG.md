@@ -30,6 +30,16 @@ Work toward [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2;
 - Lattice v0.1 syntax keeps working: `Waiting On` sections (items get `WAITING`), `@Name`, `[due:]`, `[promised:]`, front matter `todo:`.
 - `examples/sample-notes.md` is now written in the Org style; the v0.1 example moved to `examples/legacy-v0.1-notes.md`.
 
+### Milestone C — Scheduling engine
+
+- `lattice.schedule`: calendar arithmetic without `os.time` (no time-zone or DST drift), Org's `+`, `++` and `.+` repeaters in hours, days, weeks, months and years, with Org's month-end overflow; deadline warning periods and scheduled delays converted as Org does; agenda status for deadlines and scheduled dates; the next SCHEDULED/DEADLINE for completing a repeating task.
+- Dashboard: a new **TODAY** group (scheduled today or earlier and still open, deadlines today), DUE SOON based on each deadline's warning period (default `deadlines.warning_days`, 14), and `sched` dates on rows.
+- Acceptance tests PAR-016 to PAR-021, the §15.3 fixture, and the §10.5 edge cases (early, late, missed occurrences, month ends, leap years, year rollover, both timestamps repeating, time of day).
+
+#### Changed
+
+- DUE SOON now uses deadline warning periods (default 14 days, Org's) instead of a fixed 7 days, and no longer includes today: deadlines due today are in TODAY.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.

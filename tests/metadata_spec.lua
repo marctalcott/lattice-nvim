@@ -328,10 +328,10 @@ test("examples/sample-notes.md parses as its comments describe, with no warnings
     "21 Etna BLOCKED - -",
     "25 Krakatoa REVIEW B 2026-10-30",
     "36 - TODO - -",
-    "37 - WAITING - 2026-11-06",
-    "43 - WAITING - -",
-    "50 - DONE x - -",
-    "51 - CANCELED x - -",
+    "38 - WAITING - 2026-11-06",
+    "44 - WAITING - -",
+    "51 - DONE x - -",
+    "52 - CANCELED x - -",
   })
   eq(result.tasks[3].parent, 1) -- a checkbox under a heading task
   eq(result.tasks[1].inherited_tags, { "engineering" })
