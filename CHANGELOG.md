@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-11-03
 
-### Fixed (code review of 0.2.0)
+Bug fixes from a code review of 0.2.0 (#12). No new features or settings.
+
+### Fixed
 
 - `:LatticeMigrate` gave a finished v0.1 item (`- [x] TODO x`) an open state; it now gets the workflow's done state.
 - `:LatticeMigrate` deleted invalid `[due:]` dates; they now stay in the title (and in WARNINGS). Invalid v0.1 dates are no longer stripped from titles anywhere.
