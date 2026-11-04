@@ -241,7 +241,7 @@ test(":LatticeMigrate turns v0.1 items into Org headings", function()
   }, "\n"))
   local after = assert(H.parser.parse(out, DEFAULT))
   eq(after.legacy, {})
-  eq(after.diagnostics, {})
+  eq(after.warnings, {})
 end)
 
 test("migrating the v0.1 example keeps every task, person and date", function()
@@ -258,7 +258,7 @@ test("migrating the v0.1 example keeps every task, person and date", function()
   end
   eq(facts(after), facts(before))
   eq(after.legacy, {})
-  eq(after.diagnostics, {})
+  eq(after.warnings, {})
   -- Nothing to do the second time.
   eq(select(2, mutate.migrate(out, DEFAULT)), 0)
 end)

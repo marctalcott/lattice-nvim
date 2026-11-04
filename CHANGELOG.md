@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+Bug fixes from a code review of 0.2.1. No new features or settings.
+
+### Fixed
+
+- Refile within a note that ends in blank lines put the subtree under the wrong heading or failed; it now lands under the chosen heading.
+- Dashboard edits (`t`, `+`/`-`, `S`/`D`) found their task by a substring of any line, so a row for "Call" could edit "Call Bob". They now use the task's line while it is unchanged, else the nearest heading task with the same whole title; if one of several tasks with that title was renamed, the edit is refused.
+- Dashboard edits always refused a heading with `[due:]` in the middle of its title.
+- `:LatticeMigrate` turned a `- TODO` bullet nested inside a plain list item into a heading in the middle of that list. It now leaves the item (with its whole tree) as written and says why; likewise for items that would need headings deeper than `######` (they used to be flattened) and items whose title is only `@Name`.
+- `:LatticeMigrate` on a heading could remove an invalid `[due:]` instead of the valid one it converted, and silently dropped a `[due:]` that differed from the heading's `DEADLINE`, active or inactive. A differing `[due:]` or `[promised:]` (against `:PROMISED:`) is now kept and reported.
+- `:LatticeMigrate` didn't convert `@Name` and `[promised:]` on `WAITING` headings; they become `:ASSIGNED:` and `:PROMISED:`.
+- `<leader>lt` / `<leader>ld` with no heading above the cursor ignored the front matter's `workflow:` and `project:`.
+- Changing the state or priority of a heading that is only a state (`# TODO`) gave `# DONE TODO` or `# [#B] TODO`; it is now reported as a heading without text.
+- An unknown `:WORKFLOW:` was reported on every heading and item below it; it is reported once, where it is set.
+- `archive.location` `"%s.md"` pointed at the note itself and duplicated the subtree; it is now rejected, and archiving refuses any location that resolves to the note.
+- A note outside the notes root was archived into the root; its archive note now goes beside it. A buffer with no file can't be archived.
+- A zero-length repeater (`+0d`) crashed the week agenda; it is now an invalid timestamp, listed under WARNINGS.
+- Cycling refused a v0.1 bullet with Org's partly checked box (`- [-] TODO x`).
+- Rescheduling (`<leader>lS` / `<leader>lD`, dashboard `S` / `D`) dropped the repeater of a heading without a state.
+- `:ARCHIVE_OLPATH:` and refile targets included states and priorities (`NEXT [#A] Plan`); like Org, they now hold the titles only.
+- Inactive timestamps (`SCHEDULED: [2026-11-05 Thu]`) were used for scheduling; like Org, they are ignored, and WARNINGS lists them.
+- A workflow named `Default` (any case) bypassed the check against `todo`; workflow names that differ only in case are now an error.
+- Completing a `++` repeat that is far in the past stepped one interval at a time; it now jumps ahead. A state change parses the note fewer times, and dashboard edits and `Enter` on an unchanged note don't parse it to find the task.
+
 ## 0.2.1 — 2026-11-03
 
 Bug fixes from a code review of 0.2.0 (#12). No new features or settings.

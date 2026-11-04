@@ -195,7 +195,10 @@ function M.front_matter_scalar(lines, key)
     local value = (lines[i] or ""):gsub("\r$", ""):match("^" .. key .. ":%s*(.-)%s*$")
     if value then
       value = scalar((value:gsub("^#.*$", "")))
-      return value ~= "" and value or nil
+      if value ~= "" then
+        return value, i
+      end
+      return nil
     end
   end
 end
@@ -272,6 +275,18 @@ function M.front_matter(lines)
     end
   end
   return nil, nil, close
+end
+
+--- The choices for picking a state (Org's C-c C-t with selection): every
+--- state of the workflow in sequence order, then "(no state)".
+M.NO_STATE = "(no state)"
+function M.choices(kws)
+  local list = {}
+  for _, cycle in ipairs(kws.cycles) do
+    vim.list_extend(list, cycle)
+  end
+  list[#list + 1] = M.NO_STATE
+  return list
 end
 
 return M

@@ -46,6 +46,39 @@ local function heading_meta(lines, structure, index)
   return metadata.read(lines, heading.line + 1, math.min(last, heading.stop), function() end)
 end
 
+--- The line in `matches` nearest to `line`. nil when there is none, or when
+--- fewer than `expected` remain: one of several equal headings changed, so
+--- which one was meant can't be told.
+function M.nearest(matches, line, expected)
+  if expected and #matches < expected then
+    return nil
+  end
+  local best
+  for _, n in ipairs(matches) do
+    if not best or math.abs(n - line) < math.abs(best - line) then
+      best = n
+    end
+  end
+  return best
+end
+
+--- The heading whose text is `text`: on `line` if it is still there, else
+--- the nearest such heading (see M.nearest for `expected`). For refile
+--- targets chosen from a scan that may be out of date.
+function M.find_heading(lines, line, text, expected)
+  local structure = parse_structure(lines)
+  local matches = {}
+  for _, heading in ipairs(structure.headings) do
+    if heading.text == text then
+      if heading.line == line then
+        return line
+      end
+      matches[#matches + 1] = heading.line
+    end
+  end
+  return M.nearest(matches, line, expected)
+end
+
 --- "Now" for completion: local date and time, unless the caller passes one.
 function M.now()
   return { date = os.date("%Y-%m-%d"), time = os.date("%H:%M") }
@@ -56,17 +89,19 @@ local function inactive(now)
   return ("[%s %s%s]"):format(now.date, timestamp.weekday(tonumber(y), tonumber(m), tonumber(d)), now.time and (" " .. now.time) or "")
 end
 
--- Splits a heading line into hashes+space, state (nil), and the rest.
+-- Splits a heading line into hashes+space, state (nil), and the rest. A
+-- heading that is only a state ("# TODO") has that state and an empty rest,
+-- so edits never treat the state word as title text.
 local function split_heading(line, kws)
   local prefix, text = line:match("^( ? ? ?#+[ \t]+)(.*)$")
   if not prefix then
     return nil
   end
-  local state, rest = tasks.split_state(text, kws)
+  local state, gap = tasks.leading_state(text, kws)
   if not state then
-    rest = text
+    return prefix, nil, text
   end
-  return prefix, state, rest
+  return prefix, state, text:sub(#state + #gap + 1)
 end
 
 -- Planning ---------------------------------------------------------------------
@@ -74,15 +109,7 @@ end
 local ORDER = { CLOSED = 1, DEADLINE = 2, SCHEDULED = 3 }
 
 -- The "KEYWORD: <ts>" tokens of a planning line, in order.
-local function planning_tokens(line)
-  local tokens = {}
-  for keyword, raw in line:gmatch("(%u+):%s*([<%[][^>%]]*[>%]])") do
-    if ORDER[keyword] then
-      tokens[#tokens + 1] = { keyword = keyword, raw = raw }
-    end
-  end
-  return tokens
-end
+local planning_tokens = metadata.planning_pairs
 
 local function render_planning(indent, tokens)
   local parts = {}
@@ -96,8 +123,9 @@ end
 --- `line`: "CLOSED", "DEADLINE" or "SCHEDULED". A new entry joins the
 --- first planning line in Org's order (CLOSED, DEADLINE, SCHEDULED), or
 --- starts one directly under the heading. A line left empty is removed.
-function M.set_planning(lines, line, keyword, raw)
-  local structure = parse_structure(lines)
+--- `structure` may be passed when the caller already parsed these lines.
+function M.set_planning(lines, line, keyword, raw, structure)
+  structure = structure or parse_structure(lines)
   local _, index = heading_at(structure, line)
   if not index then
     return nil, "no heading on this line"
@@ -138,6 +166,30 @@ function M.set_planning(lines, line, keyword, raw)
     table.insert(lines, line + 1, keyword .. ": " .. raw)
   end
   return lines
+end
+
+--- Sets SCHEDULED or DEADLINE of the heading on `line` to `when`
+--- ({ date, time? }), keeping an existing repeater and warning period as
+--- Org's C-c C-s keeps them; `when` nil removes it. Works on any heading,
+--- task or not.
+function M.set_date(lines, line, keyword, when)
+  if not when then
+    return M.set_planning(lines, line, keyword, nil)
+  end
+  local structure = parse_structure(lines)
+  local _, index = heading_at(structure, line)
+  if not index then
+    return nil, "no heading on this line"
+  end
+  local existing = heading_meta(lines, structure, index)[keyword:lower()]
+  local ts, err = timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">")
+  if not ts then
+    return nil, err
+  end
+  if existing then
+    ts.repeater, ts.warning = existing.repeater, existing.warning
+  end
+  return M.set_planning(lines, line, keyword, schedule.format(ts), structure)
 end
 
 -- Properties -------------------------------------------------------------------
@@ -186,9 +238,7 @@ end
 
 -- Progress cookies and checkboxes ---------------------------------------------
 
-local function checked(box)
-  return box == "x" or box == "X"
-end
+local checked = tasks.checked
 
 local function cookie_text(line, done, total)
   local fraction = line:match("%[%d*/%d*%]")
@@ -372,7 +422,7 @@ function M.set_state(lines, cfg, line, new, now)
     return nil, err
   end
   local kws = parsed.keywords_at[line]
-  local structure = parse_structure(lines)
+  local structure = parsed.structure
   local _, index = heading_at(structure, line)
   if not index or not kws then
     return nil, "put the cursor on a heading"
@@ -405,7 +455,7 @@ function M.set_state(lines, cfg, line, new, now)
       for _, item in ipairs(structure.items) do
         if item.heading == index and not item.parent and item.checkbox then
           total = total + 1
-          if item.checkbox ~= "x" and item.checkbox ~= "X" then
+          if not checked(item.checkbox) then
             open = open + 1
           end
         end
@@ -459,11 +509,12 @@ function M.set_state(lines, cfg, line, new, now)
     local next_date = (changes.scheduled or changes.deadline).date
     message = ("repeats: next on %s, state back to %s"):format(next_date, back or "none")
   else
+    -- Only the heading's text changed, so the structure still fits.
     out = set_word(new, out)
     if done and not was_done and opts.logging.done == "time" then
-      out = assert(M.set_planning(out, line, "CLOSED", inactive(now)))
+      out = assert(M.set_planning(out, line, "CLOSED", inactive(now), structure))
     elseif was_done and not done then
-      out = assert(M.set_planning(out, line, "CLOSED", nil))
+      out = assert(M.set_planning(out, line, "CLOSED", nil, structure))
     end
   end
   if structure.headings[index].parent then
@@ -544,8 +595,16 @@ end
 --- as :ASSIGNED: / :PROMISED:. A finished item (checked box or done state)
 --- gets a done state. The item's own sub-lines stay directly below its
 --- heading, before the headings of nested legacy items, so nothing changes
---- owner. Invalid `[due:]` dates stay in the title. `[due:]` on headings
---- becomes DEADLINE. Returns new lines and the number of items converted.
+--- owner. Invalid `[due:]` dates stay in the title. On headings, `[due:]`
+--- becomes DEADLINE and a WAITING heading's `@Name` / `[promised:]` become
+--- :ASSIGNED: / :PROMISED:.
+---
+--- Some forms are left as written, so nothing is lost or reordered: an item
+--- nested inside a plain list item (a heading would split that list), an
+--- item that would need headings deeper than ######, and a `[due:]` on a
+--- heading that already has a different DEADLINE.
+--- Returns new lines, the number of items converted, and the skipped ones
+--- as { line, reason }.
 function M.migrate(lines, cfg)
   local parsed, err = tasks.parse(lines, cfg)
   if not parsed then
@@ -586,7 +645,7 @@ function M.migrate(lines, cfg)
         state = first_done(kws, state) or state
       end
     end
-    local block = { ("%s %s %s"):format(("#"):rep(math.min(level, 6)), state, task.title) }
+    local block = { ("%s %s %s"):format(("#"):rep(level), state, task.title) }
     if task.legacy.due then
       block[#block + 1] = "DEADLINE: " .. date_stamp(task.legacy.due)
     end
@@ -634,17 +693,81 @@ function M.migrate(lines, cfg)
     return block
   end
 
-  -- Top-level legacy items and legacy-dated headings, bottom-up so earlier
-  -- line numbers stay valid.
-  local work = {}
-  for index, task in ipairs(parsed.tasks) do
-    local nested = task.kind == "item" and task.parent and parsed.tasks[task.parent].kind == "item"
-    if (task.kind == "item" and not nested) or (task.kind == "heading" and task.legacy.due) then
-      work[#work + 1] = index
+  -- Why the legacy item (and its legacy children) at `level` can't become
+  -- headings without losing or reordering something, or nil.
+  local function blocker(index, level)
+    local task = parsed.tasks[index]
+    if task.title == "" then
+      return "its title is only @Name; add a title first"
+    end
+    if level > 6 then
+      return "it would need headings deeper than ######"
+    end
+    for _, child in ipairs(children[index] or {}) do
+      local item = item_at[parsed.tasks[child].line]
+      if structure.items[item.parent].line ~= task.line then
+        return ("line %d is inside a plain list item; move it out of that list first"):format(item.line)
+      end
+      local reason = blocker(child, level + 1)
+      if reason then
+        return reason
+      end
     end
   end
-  if #work == 0 then
-    return lines, 0
+
+  -- The heading's DEADLINE as written, active or not ("<2026-11-20 Fri>").
+  local function written_deadline(task)
+    for _, at in ipairs(task.planning_lines or {}) do
+      for _, token in ipairs(planning_tokens(lines[at]) or {}) do
+        if token.keyword == "DEADLINE" then
+          return token.raw
+        end
+      end
+    end
+  end
+
+  -- Why a heading's legacy forms can't be converted, or nil.
+  local function heading_blocker(task)
+    local legacy = task.legacy
+    if legacy.assigned and task.title == "" then
+      return "its title is only @Name; add a title first"
+    end
+    local deadline = written_deadline(task)
+    if legacy.due and deadline and not (task.deadline and task.deadline.date == legacy.due) then
+      return ("its [due:%s] differs from its DEADLINE %s; keep one"):format(legacy.due, deadline)
+    end
+    local promised = task.properties.PROMISED
+    if legacy.promised and promised and promised ~= legacy.promised then
+      return ("its [promised:%s] differs from its :PROMISED: %s; keep one"):format(legacy.promised, promised)
+    end
+  end
+
+  -- Top-level legacy items and headings with legacy forms. Tasks come in
+  -- line order, so `skipped` does too; `work` is applied bottom-up so
+  -- earlier line numbers stay valid.
+  local work, skipped = {}, {}
+  local function skip(line, reason)
+    skipped[#skipped + 1] = { line = line, reason = reason }
+  end
+  for index, task in ipairs(parsed.tasks) do
+    local nested = task.kind == "item" and task.parent and parsed.tasks[task.parent].kind == "item"
+    if task.kind == "item" and not nested then
+      local item = item_at[task.line]
+      local base = item.heading and structure.headings[item.heading].level or 1
+      local reason = item.parent and "it is inside a plain list item; move it out of the list first" or blocker(index, base + 1)
+      if reason then
+        skip(task.line, reason)
+      else
+        work[#work + 1] = index
+      end
+    elseif task.kind == "heading" and next(task.legacy) then
+      local reason = heading_blocker(task)
+      if reason then
+        skip(task.line, reason)
+      else
+        work[#work + 1] = index
+      end
+    end
   end
   table.sort(work, function(a, b)
     return parsed.tasks[a].line > parsed.tasks[b].line
@@ -654,10 +777,27 @@ function M.migrate(lines, cfg)
   for _, index in ipairs(work) do
     local task = parsed.tasks[index]
     if task.kind == "heading" then
-      count = count + 1
-      out[task.line] = out[task.line]:gsub("[ \t]*%[due:%d%d%d%d%-%d%d%-%d%d%]", "", 1)
-      if not task.deadline then
-        out = assert(M.set_planning(out, task.line, "DEADLINE", date_stamp(task.legacy.due)))
+      count = count + 1 -- items are counted by convert()
+      local legacy = task.legacy
+      -- Removes the first "[tag:value]" with exactly this value.
+      local function drop(tag, value)
+        out[task.line] = out[task.line]:gsub("[ \t]*%[" .. tag .. ":" .. vim.pesc(value) .. "%]", "", 1)
+      end
+      if legacy.due then
+        drop("due", legacy.due)
+        if not task.deadline then
+          out = assert(M.set_planning(out, task.line, "DEADLINE", date_stamp(legacy.due)))
+        end
+      end
+      if legacy.promised then
+        drop("promised", legacy.promised)
+        if not task.properties.PROMISED then
+          out = assert(M.set_property(out, task.line, "PROMISED", legacy.promised))
+        end
+      end
+      if legacy.assigned then
+        out[task.line] = out[task.line]:gsub("([ \t])@" .. vim.pesc(legacy.assigned) .. "[ \t]*", "%1", 1)
+        out = assert(M.set_property(out, task.line, "ASSIGNED", legacy.assigned))
       end
     else
       local item = item_at[task.line]
@@ -678,7 +818,7 @@ function M.migrate(lines, cfg)
       end
     end
   end
-  return out, count
+  return out, count, skipped
 end
 
 -- Refile and archive (§14.2) -----------------------------------------------
@@ -719,19 +859,24 @@ local function shifted_block(lines, tree, delta)
   return block
 end
 
+-- The lines without the subtree. Also returns how many lines went at the
+-- subtree's place, so a line below it can be found again (trailing blank
+-- lines trimmed at the end of the note don't count).
 local function remove_block(lines, tree)
   local out = copy(lines)
+  local removed = tree.last - tree.first + 1
   for _ = tree.first, tree.last do
     table.remove(out, tree.first)
   end
   -- Don't leave two blank lines where the subtree was.
   if tree.first > 1 and vim.trim(out[tree.first - 1] or "") == "" and vim.trim(out[tree.first] or "") == "" then
     table.remove(out, tree.first)
+    removed = removed + 1
   end
   while #out > 1 and vim.trim(out[#out]) == "" and vim.trim(out[#out - 1]) == "" do
     table.remove(out)
   end
-  return out
+  return out, removed
 end
 
 -- Inserts `block` at the end of the subtree of the heading on `line`, or at
@@ -792,11 +937,11 @@ function M.refile(lines, line, dest_lines, dest_line)
   if dest_line and dest_line >= tree.first and dest_line <= tree.last then
     return nil, "a heading can't be refiled under itself"
   end
-  local removed = remove_block(lines, tree)
+  local rest, removed = remove_block(lines, tree)
   if dest_line and dest_line > tree.last then
-    dest_line = dest_line - (#lines - #removed)
+    dest_line = dest_line - removed
   end
-  return insert_block(removed, dest_line, block), nil
+  return insert_block(rest, dest_line, block), nil
 end
 
 --- Archives the subtree on `line`, Org style: it becomes a top-level

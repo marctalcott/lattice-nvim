@@ -82,6 +82,9 @@ function M.parse(raw)
       end
       ts.time = ("%02d:%s"):format(tonumber(hour), minute)
     elseif kind and (kind == "+" or kind == "++" or kind == ".+") and not ts.repeater then
+      if tonumber(n) == 0 then
+        return nil, ("%s: the repeater %s never moves; use an interval of 1 or more"):format(raw, token)
+      end
       ts.repeater = { kind = kind, n = tonumber(n), unit = unit }
     elseif warn_dash and not ts.warning then
       ts.warning = { n = tonumber(warn_n), unit = warn_unit, first = warn_dash == "--" }
