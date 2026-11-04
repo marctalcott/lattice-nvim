@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — Org-mode for Markdown
+
+Work toward [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2; plan and decisions in [`specs/ORG_MARKDOWN_PLAN.md`](specs/ORG_MARKDOWN_PLAN.md).
+
+### Milestone A — Parser foundation
+
+- `lattice.markdown`: Markdown block structure from Neovim's bundled Tree-sitter parser (headings with section ranges, list items with nesting and task markers, front matter; code blocks ignored).
+- `lattice.tasks`: heading tasks, checkbox tasks (every marker form, including numbered), keyword bullets, inline states on checkboxes, multi-word states, checkbox/state conflict diagnostics, and the unified task tree with source ranges.
+- Acceptance tests PAR-001 to PAR-006 and PAR-015. Not yet used by the dashboard.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.
