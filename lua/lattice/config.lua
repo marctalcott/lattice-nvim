@@ -18,6 +18,8 @@ local DEFAULT_KEYMAPS = {
   deadline = "<leader>lD",
   priority_up = "<leader>l+",
   priority_down = "<leader>l-",
+  refile = "<leader>lw",
+  archive = "<leader>lA",
 }
 
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
@@ -34,7 +36,10 @@ function M.defaults()
   local default = assert(keywords.build(keywords.DEFAULT))
   return {
     version = 1,
-    scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
+    scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**", "**/*_archive.md" } },
+    -- Where :LatticeArchive moves a subtree; %s is the note's path relative
+    -- to the root without ".md" (Org's "%s_archive" default).
+    archive = { location = "%s_archive.md" },
     -- Workflows by name (LATTICE_SYNTAX_SPEC §4). `default` applies unless
     -- a task's :WORKFLOW: or project selects another. `keywords` is the
     -- default workflow, kept under its v0.1 name.
@@ -135,7 +140,7 @@ local function validate(raw)
   if raw.version ~= nil and raw.version ~= 1 then
     return nil, ("unsupported version %s (expected 1)"):format(vim.inspect(raw.version))
   end
-  for _, key in ipairs({ "scan", "headings", "inbox", "workflows", "priorities", "inherit", "deadlines", "logging", "enforce" }) do
+  for _, key in ipairs({ "scan", "headings", "inbox", "workflows", "priorities", "inherit", "deadlines", "logging", "enforce", "archive" }) do
     if raw[key] ~= nil and type(raw[key]) ~= "table" then
       return nil, key .. " must be a JSON object"
     end
@@ -259,6 +264,17 @@ local function validate(raw)
     end
   end
 
+  local location = (raw.archive or {}).location
+  if location ~= nil then
+    if type(location) ~= "string" or not location:find("%s", 1, true) or not location:match("%.md$") then
+      return nil, 'archive.location must be a path ending in .md containing %s, such as "%s_archive.md"'
+    end
+    if location:sub(1, 1) == "/" or location:sub(1, 1) == "~" or ("/" .. location .. "/"):find("/../", 1, true) then
+      return nil, "archive.location must stay inside the notes root"
+    end
+    cfg.archive.location = location
+  end
+
   if raw.repeat_to_state ~= nil then
     if type(raw.repeat_to_state) ~= "string" or vim.trim(raw.repeat_to_state) == "" then
       return nil, "repeat_to_state must be a state name"
@@ -310,7 +326,9 @@ end
 function M.load(root)
   local path = root .. "/" .. M.filename
   if not vim.uv.fs_stat(path) then
-    return M.defaults(), ("No %s in %s; using defaults."):format(M.filename, vim.fn.fnamemodify(root, ":~"))
+    local cfg = M.defaults()
+    cfg.signature = ""
+    return cfg, ("No %s in %s; using defaults."):format(M.filename, vim.fn.fnamemodify(root, ":~"))
   end
 
   local file, open_err = io.open(path, "r")
@@ -328,6 +346,9 @@ function M.load(root)
   if not cfg then
     return nil, nil, ("Invalid config in %s: %s\nFix the file, then refresh."):format(path, err)
   end
+  -- Identifies this configuration, so cached parses are dropped when it
+  -- changes (incremental refresh, milestone E).
+  cfg.signature = content
   return cfg, notice
 end
 

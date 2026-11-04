@@ -125,29 +125,96 @@ function M.list_inbox(root, inbox_path, unreadable)
   return captures
 end
 
+-- Parsed notes from earlier scans, so a refresh re-parses only notes that
+-- changed (spec §13.3 rule 9, PAR-029). Keyed by path; dropped wholesale
+-- when the root or configuration changes.
+local cache = { key = nil, files = {} }
+
+--- Forgets cached parses (tests, and :LatticeRefresh with a bang).
+function M.clear_cache()
+  cache = { key = nil, files = {} }
+end
+
+-- Loaded buffers with unsaved changes, by real path: their text is newer
+-- than the file, so Lattice reads them instead (§14.1 "respect unsaved
+-- buffers").
+local function modified_buffers()
+  local map = {}
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified and vim.bo[buf].buftype == "" then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= "" then
+        map[vim.uv.fs_realpath(name) or name] = buf
+      end
+    end
+  end
+  return map
+end
+
+-- Reads one note, from its unsaved buffer or from disk, reusing the cached
+-- parse when nothing changed. Returns parsed, mtime, or nil and an error.
+local function read_note(path, cfg, buffers, result)
+  local buf = next(buffers) and buffers[vim.uv.fs_realpath(path) or path]
+  local stamp, lines, mtime
+  if buf then
+    stamp = "buf:" .. buf .. ":" .. vim.api.nvim_buf_get_changedtick(buf)
+    mtime = os.time()
+  else
+    local stat, err = vim.uv.fs_stat(path)
+    if not stat then
+      return nil, nil, err
+    end
+    stamp = ("disk:%d:%d:%d"):format(stat.mtime.sec, stat.mtime.nsec, stat.size)
+    mtime = stat.mtime.sec
+  end
+  local cached = cache.files[path]
+  if cached and cached.stamp == stamp then
+    return cached.parsed, mtime
+  end
+  if buf then
+    lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  else
+    local read_err
+    lines, read_err = read_lines(path)
+    if not lines then
+      return nil, nil, read_err
+    end
+  end
+  local parsed, parse_err = tasks.parse(lines, cfg)
+  if not parsed then
+    return nil, nil, parse_err, true
+  end
+  result.parsed = result.parsed + 1
+  cache.files[path] = { stamp = stamp, parsed = parsed }
+  return parsed, mtime
+end
+
 function M.scan(root, cfg)
   local files, unreadable = M.list_files(root, cfg.scan)
-  local result = { tasks = {}, date_errors = {}, warnings = {}, legacy = {}, unreadable = unreadable, files = #files }
+  local result = { tasks = {}, date_errors = {}, warnings = {}, legacy = {}, outlines = {}, unreadable = unreadable, files = #files, parsed = 0 }
+  local key = root .. "\0" .. (cfg.signature or "")
+  if cache.key ~= key then
+    cache = { key = key, files = {} }
+  end
+  local buffers = modified_buffers()
+  local seen = {}
   local ids = {} -- :ID: -> first task with it, across notes (§13.4)
   result.inbox = M.list_inbox(root, cfg.inbox.path, unreadable)
 
   for _, rel in ipairs(files) do
     local path = root .. "/" .. rel
-    local lines, err = read_lines(path)
-    if lines then
-      local parsed, parse_err = tasks.parse(lines, cfg)
-      if not parsed then
-        result.error = parse_err
-        return result
-      end
-      -- The modified time only orders the DONE group, so stat just the
-      -- notes that have done-state items.
-      local mtime
-      for _, task in ipairs(parsed.tasks) do
-        if task.done and task.state and not mtime then
-          local stat = vim.uv.fs_stat(path)
-          mtime = stat and stat.mtime.sec or 0
-        end
+    seen[path] = true
+    local parsed, mtime, err, fatal = read_note(path, cfg, buffers, result)
+    if fatal then
+      result.error = err
+      return result
+    end
+    if parsed then
+      -- Cached parses are shared between scans: hand out copies.
+      parsed = vim.deepcopy(parsed)
+      for _, heading in ipairs(parsed.headings or {}) do
+        heading.rel, heading.path = rel, path
+        result.outlines[#result.outlines + 1] = heading
       end
       for _, task in ipairs(parsed.tasks) do
         task.rel, task.path, task.mtime = rel, path, mtime
@@ -183,6 +250,11 @@ function M.scan(root, cfg)
       end
     else
       unreadable[#unreadable + 1] = { path = rel, message = tostring(err) }
+    end
+  end
+  for path in pairs(cache.files) do
+    if not seen[path] then
+      cache.files[path] = nil
     end
   end
   return result
@@ -222,6 +294,8 @@ function M.collect(root)
   result.root, result.notice, result.headings, result.keywords = root, notice, cfg.headings, cfg.keywords
   result.workflows = cfg.workflows
   result.deadlines = cfg.deadlines
+  result.priorities = cfg.priorities
+  result.cfg = cfg
   return result
 end
 

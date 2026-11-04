@@ -7,6 +7,8 @@ local notes, reset, dashboard_text, press_enter_on = H.notes, H.reset, H.dashboa
 
 test("a missing config uses defaults with a notice", function()
   local cfg, notice, err = config.load(notes())
+  eq(cfg.signature, "")
+  cfg.signature = nil
   eq(cfg, config.defaults())
   assert(notice:find(".lattice.json", 1, true))
   eq(err, nil)
@@ -91,7 +93,7 @@ test("setup again removes the keymaps it set before", function()
   eq(vim.fn.maparg("<leader>ll", "n"), "")
   eq(vim.fn.maparg("<leader>nl", "n", false, true).desc, "Lattice: open dashboard")
   lattice.setup({ root = "~/x", keymaps = false })
-  for _, lhs in ipairs({ "<leader>nl", "<leader>lt", "<leader>ld", "<leader>lr", "<leader>ln", "<leader>lp", "<leader>ls", "<leader>lx", "<leader>lS", "<leader>lD", "<leader>l+", "<leader>l-" }) do
+  for _, lhs in ipairs({ "<leader>nl", "<leader>lt", "<leader>ld", "<leader>lr", "<leader>ln", "<leader>lp", "<leader>ls", "<leader>lx", "<leader>lS", "<leader>lD", "<leader>l+", "<leader>l-", "<leader>lw", "<leader>lA" }) do
     eq(vim.fn.maparg(lhs, "n"), "")
   end
   eq(config.active_keymaps, {})
@@ -193,7 +195,7 @@ test("git metadata is skipped even when the exclude list omits it", function()
   write(root, ".git/notes.md", "## TODO\n- TODO Git internals")
   write(root, "Projects/sub/.git/x.md", "## TODO\n- TODO Nested git")
   write(root, "a.md", "## TODO\n- TODO Real")
-  eq(config.defaults().scan.exclude, { "Archives/**", ".git/**" })
+  eq(config.defaults().scan.exclude, { "Archives/**", ".git/**", "**/*_archive.md" })
   eq(scanner.list_files(root, config.defaults().scan), { "a.md" })
   eq(scanner.list_files(root, { include = { "**/*.md" }, exclude = {} }), { "a.md" })
 end)
@@ -239,13 +241,43 @@ test("a bad front matter sequence is a per-file warning, not a scan failure", fu
   eq(result.warnings[1].line, 2)
 end)
 
-test("only notes with done items are stat'ed for their modified time", function()
+test("PAR-029 a refresh re-parses only the notes that changed", function()
   local root = notes()
-  write(root, "a.md", "- TODO Open\n")
-  write(root, "b.md", "- DONE Finished\n")
+  write(root, "a.md", "## TODO A\n")
+  write(root, "b.md", "## TODO B\n")
+  scanner.clear_cache()
+  eq(scanner.collect(root).parsed, 2)
+  eq(scanner.collect(root).parsed, 0)
+  -- Change one note (size changes, so the stamp does even within a second).
+  write(root, "b.md", "## TODO B changed\n## NEXT C\n")
   local result = scanner.collect(root)
-  eq(result.tasks[1].mtime, nil)
-  eq(type(result.tasks[2].mtime), "number")
+  eq(result.parsed, 1)
+  eq(vim.tbl_map(function(t)
+    return t.title
+  end, result.tasks), { "A", "B changed", "C" })
+  -- A deleted note leaves the index.
+  os.remove(root .. "/a.md")
+  eq(#scanner.collect(root).tasks, 2)
+  -- A config change re-parses everything.
+  write(root, ".lattice.json", '{"todo": "TODO NEXT | DONE"}')
+  eq(scanner.collect(root).parsed, 1)
+end)
+
+test("an open buffer with unsaved changes is read instead of the file", function()
+  local root = notes()
+  local path = write(root, "a.md", "## TODO On disk\n")
+  vim.cmd.edit(vim.fn.fnameescape(path))
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { "## NEXT In the buffer" })
+  local result = scanner.collect(root)
+  eq({ result.tasks[1].state, result.tasks[1].title }, { "NEXT", "In the buffer" })
+  vim.cmd("bwipeout!")
+  eq(scanner.collect(root).tasks[1].title, "On disk")
+end)
+
+test("every task carries its note's modified time", function()
+  local root = notes()
+  write(root, "a.md", "## TODO Open\n")
+  eq(type(scanner.collect(root).tasks[1].mtime), "number")
 end)
 
 test("todo in .lattice.json may be a string or a list", function()

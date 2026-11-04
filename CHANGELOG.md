@@ -59,6 +59,16 @@ Spec Amendment 1 and plan decision D14: as in Org-mode, a Markdown checkbox is n
 - New `.lattice.json` keys: `logging`, `enforce`, `repeat_to_state`.
 - Acceptance tests PAR-022 to PAR-024, PAR-026 and PAR-027.
 
+### Milestone E — Integration
+
+- **Incremental refresh:** a refresh re-parses only notes that changed (PAR-029); unsaved open buffers are read instead of their files; saving a note refreshes an open dashboard.
+- **Views:** `1` overview, `2` week agenda (scheduled, deadlines, repeats; today's `Sched. Nx`, `N d. ago`, `In N d.`; `b`/`f`/`.` between weeks), `3` all TODOs by priority, `4` projects with counts, status and next action (`Enter` lists a project's TODOs).
+- **Filters** with `/`: `+tag -tag #A project:Name @person state:NEXT` and title words.
+- **Editing from the dashboard**, as in Org's agenda: `t` state, `+`/`-` priority, `S`/`D` dates, `s` saves the edited notes. Edits go to the note's buffer, unsaved.
+- **`Enter`** finds the task by its title when lines moved in an open note (PAR-030).
+- **`:LatticeRefile`** (`<leader>lw`) and **`:LatticeArchive`** (`<leader>lA`), with Org's re-levelling and ARCHIVE_* properties; archive notes (`**/*_archive.md`) are excluded from scanning by default; new `archive.location` setting.
+- The README's example dashboard, empty since the strict-Org change, is rendered again.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.

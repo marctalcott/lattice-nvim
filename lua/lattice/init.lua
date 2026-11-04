@@ -19,6 +19,8 @@ M.deadline = insert.deadline
 M.priority_up = insert.priority_up
 M.priority_down = insert.priority_down
 M.migrate = insert.migrate
+M.refile = insert.refile
+M.archive = insert.archive
 
 function M.health()
   vim.cmd("checkhealth lattice")
@@ -74,6 +76,8 @@ local function set_keymaps(keymaps)
     { "deadline", M.deadline, "Lattice: deadline" },
     { "priority_up", M.priority_up, "Lattice: raise priority" },
     { "priority_down", M.priority_down, "Lattice: lower priority" },
+    { "refile", M.refile, "Lattice: refile subtree" },
+    { "archive", M.archive, "Lattice: archive subtree" },
   }
   local skipped = {}
   for _, action in ipairs(actions) do
@@ -121,7 +125,18 @@ function M.setup(opts)
   command("LatticePriorityUp", M.priority_up, "Raise the priority of the heading under the cursor")
   command("LatticePriorityDown", M.priority_down, "Lower the priority of the heading under the cursor")
   command("LatticeMigrate", M.migrate, "Convert this note's Lattice v0.1 items to Org headings")
+  command("LatticeRefile", M.refile, "Move the subtree under the cursor under another heading")
+  command("LatticeArchive", M.archive, "Move the subtree under the cursor to the archive note")
   set_keymaps(options.keymaps)
+  -- Incremental refresh: an open dashboard follows saved notes.
+  local group = vim.api.nvim_create_augroup("lattice", { clear = true })
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = group,
+    pattern = "*.md",
+    callback = function(args)
+      dashboard.on_note_saved(args.match)
+    end,
+  })
 end
 
 return M

@@ -171,6 +171,7 @@ function M.parse(lines, cfg)
     warnings = {}, -- diagnostics shown on the dashboard
     legacy = {}, -- { line, form } for v0.1 syntax still in use
     front_matter = structure.front_matter,
+    headings = {}, -- every heading, for refile targets: { line, level, text, path_titles }
   }
 
   local function diagnose(line, severity, category, message)
@@ -554,6 +555,17 @@ function M.parse(lines, cfg)
         task.cookie = { kind = "percent", text = ("[%s%%]"):format(pct) }
       end
     end
+  end
+
+  -- Every heading with its outline path, for refile targets (§14.2).
+  for _, heading in ipairs(structure.headings) do
+    local titles = {}
+    local up = heading
+    while up do
+      table.insert(titles, 1, (split_tags(up.text)))
+      up = up.parent and structure.headings[up.parent]
+    end
+    result.headings[#result.headings + 1] = { line = heading.line, level = heading.level, text = heading.text, outline = titles }
   end
 
   -- Duplicate IDs within the note (§13.4); the scanner checks across notes.

@@ -44,11 +44,13 @@ setup({opts})
     {keymaps}  (table|false) Keys for `open`, `refresh`, `add_todo`,
                `add_waiting`, `next_state`, `prev_state`, `set_state`,
                `toggle_checkbox`, `schedule`, `deadline`, `priority_up`,
-               `priority_down`. Each may be a key string or false. Set
+               `priority_down`, `refile`, `archive`. Each may be a key
+               string or false. Set
                `keymaps = false` to create none. Defaults: `<leader>ll`,
                `<leader>lr`, `<leader>lt`, `<leader>ld`, `<leader>ln`,
                `<leader>lp`, `<leader>ls`, `<leader>lx`, `<leader>lS`,
-               `<leader>lD`, `<leader>l+`, `<leader>l-`.
+               `<leader>lD`, `<leader>l+`, `<leader>l-`, `<leader>lw`,
+               `<leader>lA`.
 
 ==============================================================================
 3. NOTE FORMAT                                                 *lattice-format*
@@ -123,6 +125,23 @@ undated tasks by file and line.
 
 Lattice reads saved files. Save a note, then refresh.
 
+                                                          *lattice-views*
+Views: `1` overview, `2` week agenda (Org's C-c a a: each day's scheduled
+items, deadlines and repeats; today adds `Sched. Nx`, `N d. ago` and
+`In N d.`; `b` / `f` / `.` move between weeks), `3` all TODOs by priority
+(C-c a t), `4` projects (counts, status, next action; <CR> lists one
+project's TODOs).
+
+`/` filters every view: `+tag` `-tag` `#A` `project:Name` `@person`
+`state:NEXT` and title words. An empty answer clears it.
+
+Editing rows, as in Org's agenda: `t` state, `+` / `-` priority, `S` / `D`
+SCHEDULED / DEADLINE. Edits go to the note's buffer (opened in the
+background if needed), unsaved; `s` saves the notes edited from here.
+
+Lattice re-parses only notes that changed, reads unsaved open buffers,
+and refreshes an open dashboard when a note under the root is saved.
+
 ==============================================================================
 5. ADDING TASKS                                                *lattice-insert*
 
@@ -178,6 +197,16 @@ undo step; nothing is saved. A stale or repeated command is refused.
 - Dates: YYYY-MM-DD, today, tomorrow, +3d/+2w/+1m/+1y, optional HH:MM;
   empty removes. Repeaters and warnings are kept.
 - Priority: none starts at the default; past either end removes it.
+
+                                                             *lattice-refile*
+:LatticeRefile   (<leader>lw, Org's C-c C-w) moves the subtree under the
+cursor under a heading chosen from every note, re-levelled, or to the end
+of a note.
+:LatticeArchive  (<leader>lA) moves it to `archive.location` (default
+"%s_archive.md" beside the note) as a top-level heading with Org's
+ARCHIVE_TIME, ARCHIVE_FILE, ARCHIVE_OLPATH, ARCHIVE_CATEGORY and
+ARCHIVE_TODO properties. Archive notes are excluded from scanning by
+default. Both change buffers only; both notes are checked first.
 
 ==============================================================================
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
@@ -238,9 +267,9 @@ error and scans nothing.
 ==============================================================================
 8. LIMITATIONS AND TROUBLESHOOTING                             *lattice-health*
 
-- No file watching. Refresh by hand.
-- Org subset in progress: a fuller agenda, editing from the dashboard,
-  refile and archive come later.
+- Refresh on save or with `r`; files changed outside Neovim are picked
+  up on the next refresh.
+- Org subset: no clocking, tables, links, capture templates or export.
 - A broken Tree-sitter parser binary can crash Neovim; delete it and run
   :TSUpdate.
 - WBR, AI discovery, Portico publishing and Drafts import are not built.

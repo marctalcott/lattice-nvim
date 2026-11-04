@@ -569,4 +569,139 @@ function M.migrate()
   end)
 end
 
+-- Refile and archive (§14.2) ------------------------------------------------
+
+local function relative(path)
+  local root = config.options.root
+  local real_root = root and (vim.uv.fs_realpath(root) or root)
+  local real = vim.uv.fs_realpath(path) or path
+  if real_root and real:sub(1, #real_root + 1) == real_root .. "/" then
+    return real:sub(#real_root + 2), real_root
+  end
+  return vim.fn.fnamemodify(path, ":t"), real_root
+end
+
+--- Org's C-c C-w: moves the subtree under the cursor under a heading
+--- chosen from every note (or to the end of a note), re-levelling it.
+function M.refile()
+  local buf = current_markdown_buffer("refile a task")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local root = config.options.root
+  if not root then
+    warn("set the notes root to refile")
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if not lines[row]:match("^ ? ? ?#+%s") then
+    warn("put the cursor on a heading")
+    return
+  end
+  local here = vim.uv.fs_realpath(vim.api.nvim_buf_get_name(buf)) or vim.api.nvim_buf_get_name(buf)
+  local result = require("lattice.scanner").collect(root)
+  local choices = {}
+  local seen_files = {}
+  for _, heading in ipairs(result.outlines or {}) do
+    if not seen_files[heading.path] then
+      seen_files[heading.path] = true
+      choices[#choices + 1] = { label = heading.rel .. "  (end of note)", path = heading.path }
+    end
+    choices[#choices + 1] = {
+      label = heading.rel .. " › " .. table.concat(heading.outline, " › "),
+      path = heading.path,
+      line = heading.line,
+      text = heading.text,
+    }
+  end
+  vim.ui.select(choices, {
+    prompt = "Refile to: ",
+    format_item = function(item)
+      return item.label
+    end,
+  }, function(choice)
+    if not choice or not usable(buf) then
+      return
+    end
+    local same = (vim.uv.fs_realpath(choice.path) or choice.path) == here
+    if same then
+      -- The target line may have moved if the note changed since the scan.
+      local dest = choice.line and require("lattice.dashboard").locate(lines, { line = choice.line, title = choice.text })
+      local new_lines, err = mutate.refile(lines, row, nil, dest)
+      if not new_lines then
+        warn(err)
+        return
+      end
+      local ok, apply_err = mutate.apply(buf, lines, new_lines)
+      if not ok then
+        warn(apply_err)
+      end
+      return
+    end
+    local dest_buf = mutate.note_buffer(choice.path)
+    local dest_lines = vim.api.nvim_buf_get_lines(dest_buf, 0, -1, false)
+    local dest = choice.line and require("lattice.dashboard").locate(dest_lines, { line = choice.line, title = choice.text })
+    local new_src, new_dest = mutate.refile(lines, row, dest_lines, dest)
+    if not new_src then
+      warn(new_dest)
+      return
+    end
+    local ok, err = mutate.apply_pair(buf, lines, new_src, dest_buf, dest_lines, new_dest)
+    if not ok then
+      warn(err)
+    else
+      vim.notify(("Lattice: refiled to %s (both notes unsaved)"):format(vim.fn.fnamemodify(choice.path, ":t")), vim.log.levels.INFO)
+    end
+  end)
+end
+
+--- Org's archive: moves the subtree under the cursor to the archive note
+--- (`archive.location`, default "<note>_archive.md" beside it).
+function M.archive()
+  local buf = current_markdown_buffer("archive a task")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if not lines[row]:match("^ ? ? ?#+%s") then
+    warn("put the cursor on a heading")
+    return
+  end
+  local path = vim.api.nvim_buf_get_name(buf)
+  local rel, real_root = relative(path)
+  local base = real_root and (real_root .. "/") or (vim.fn.fnamemodify(path, ":p:h") .. "/")
+  local location = (cfg.archive or {}).location or "%s_archive.md"
+  local stem = rel:gsub("%.md$", "")
+  local target = base .. location:gsub("%%s", function()
+    return stem
+  end)
+  if vim.fn.isdirectory(vim.fn.fnamemodify(target, ":h")) == 0 then
+    warn(("the folder for %s doesn't exist; create it or change archive.location"):format(vim.fn.fnamemodify(target, ":~")))
+    return
+  end
+  local dest_buf = mutate.note_buffer(target)
+  local dest_lines = vim.api.nvim_buf_get_lines(dest_buf, 0, -1, false)
+  local new_src, new_dest = mutate.archive(lines, cfg, row, rel, dest_lines)
+  if not new_src then
+    warn(new_dest)
+    return
+  end
+  local ok, err = mutate.apply_pair(buf, lines, new_src, dest_buf, dest_lines, new_dest)
+  if not ok then
+    warn(err)
+  else
+    vim.notify(("Lattice: archived to %s (both notes unsaved)"):format(vim.fn.fnamemodify(target, ":~:.")), vim.log.levels.INFO)
+  end
+end
+
 return M

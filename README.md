@@ -128,10 +128,57 @@ These items take no Org metadata (planning lines, drawers, tags). Lattice never 
 
 ## Dashboard
 
-`:Lattice` (default `<leader>ll`) opens the dashboard in the current window. For the two notes in [`examples/`](examples) with [`examples/.lattice.json`](examples/.lattice.json), on November 2, 2026, it shows:
+`:Lattice` (default `<leader>ll`) opens the dashboard in the current window. For the two notes in [`examples/`](examples) with [`examples/.lattice.json`](examples/.lattice.json), on November 2, 2026, the overview shows:
 
 ```
+LATTICE                                                                          Mon Nov 02
+My management workspace — local notes
+~/Documents/WorkNotes  (2 notes)
+───────────────────────────────────────────────────────────────────────────────────────────
+MY TO DO (10)
+  [ ] TODO Review budget                                            Oct 30
+  [ ] REVIEW [#B] Review release checklist                          Oct 30
+  [ ] NEXT Send project update                                      Nov 05
+  [ ] IN PROGRESS [#A] Review system architecture [1/2] :design:    Nov 05
+  [ ] TODO Prepare revised staffing plan
+  [ ] TODO Nested items count when they start with a keyword
+  [ ] NEXT Draft the Q1 plan
+  [ ] READY Draft the proposal outline                              sched Oct 30
+  [ ] BLOCKED Load test the new cluster
+  [ ] TODO Review team metrics                                      sched Nov 02
 
+WAITING ON (5)
+  [ ] WAITING Raju — Provide deployment estimate                    Nov 06
+  [ ] WAITING Elira Voss — Reply about the offsite venue            Nov 06
+  [ ] WAITING Asha — Submit hiring feedback                         Nov 09  promised Nov 07
+  [ ] WAITING Unassigned — Follow up with vendor
+  [ ] WAITING Tavren Solis — Send interview scorecards              promised Nov 07
+
+OVERDUE (2)
+  !  TODO Review budget                                             Oct 30
+  !  REVIEW [#B] Review release checklist                           Oct 30
+
+TODAY (2)  [scheduled today or earlier and still open; deadlines today]
+  »  READY Draft the proposal outline                               sched Oct 30
+  »  TODO Review team metrics                                       sched Nov 02
+
+DUE SOON (5)  [deadlines within their warning period, default 14 days]
+  ·  NEXT Send project update                                       Nov 05
+  ·  IN PROGRESS [#A] Review system architecture [1/2] :design:     Nov 05
+  ·  WAITING Raju — Provide deployment estimate                     Nov 06
+  ·  WAITING Elira Voss — Reply about the offsite venue             Nov 06
+  ·  WAITING Asha — Submit hiring feedback                          Nov 09  promised Nov 07
+
+DONE (5)
+  [x] DONE Archive the old wiki
+  [x] CANCELED Book the conference booth
+  [x] DONE Review the completed migration
+  [x] CANCELED Book the offsite
+  [x] DONE Lee — Send the signed contract
+
+───────────────────────────────────────────────────────────────────────────────────────────
+Enter  Open note    r  Refresh    q  Close    ?  Help
+1 Overview  2 Week  3 TODOs  4 Projects    / Filter    t State  +/- Priority  S/D Dates  s Save
 ```
 
 - **MY TO DO** and **WAITING ON** list open tasks. Each row shows the state, priority, assignee and the task's own tags. WAITING ON holds tasks in the `WAITING` state and v0.1 `Waiting On` items. Tasks with a date come first, earliest first, so overdue items lead. Undated tasks follow. Ties are ordered by file path and line.
@@ -144,12 +191,49 @@ These items take no Org metadata (planning lines, drawers, tags). Lattice never 
 - **WARNINGS** appears when a file couldn't be read or a note has a problem Lattice found (see [Metadata](#metadata)). `Enter` on a warning opens the note at that line.
 - With no open tasks, the dashboard shows the keywords it looks for, and the header shows the scanned root and note count.
 
+### Views
+
+| Key | View | Org equivalent |
+|-----|------|----------------|
+| `1` | **Overview**: the groups above | |
+| `2` | **Week agenda**: one section per day, Monday to Sunday. Each day lists tasks scheduled or due that day, repeats included. Today also lists what is still open from earlier (`Sched. 4x`, `2 d. ago`) and deadlines inside their warning period (`In 3 d.`). Timed entries come first, then by priority. `b` / `f` go to the previous / next week, `.` back to this week. | `C-c a a` |
+| `3` | **All TODOs**: every open task, by priority (a task without one counts as the default, `B`), then deadline | `C-c a t` |
+| `4` | **Projects**: each project with its open and done counts, `:PROJECT_STATUS:` and next action (its first `NEXT` task, else its most urgent open task). `Enter` lists the project's TODOs. | |
+
+`/` sets a **filter** for every view; `/` with an empty answer clears it. Terms combine:
+
+| Term | Keeps tasks that |
+|------|------------------|
+| `+etna` / `-later` | have / lack the tag, own or inherited |
+| `#A` | have that priority (several: any of them) |
+| `project:Etna` | belong to the project (case-insensitive) |
+| `@elira` | have an `:ASSIGNED:` containing it |
+| `state:NEXT` | are in that state (several: any of them) |
+| any other word | have it in their title |
+
+### Editing from the dashboard
+
+As in Org's agenda, a task row can be edited where it is. The edit goes to the note's buffer, which is opened in the background if needed and keeps any unsaved changes already there. The note isn't saved until you press `s` or save it yourself, and the dashboard shows the change straight away.
+
+| Key | Action | Org agenda |
+|-----|--------|------------|
+| `t` | Choose the task's state: completing, repeating and `CLOSED` work as in [Editing tasks](#editing-tasks) | `t` |
+| `+` / `-` | Raise / lower its priority | `S-Up` / `S-Down` |
+| `S` / `D` | Set or remove its `SCHEDULED` / `DEADLINE` | `C-c C-s` / `C-c C-d` |
+| `s` | Save the notes edited from the dashboard | `s` |
+
+If a task's line moved since the last scan, Lattice finds it again by its title. If its title changed too, it asks you to refresh rather than editing the wrong line.
+
+### Other keys
+
 | Key     | Action                                                                 |
 |---------|------------------------------------------------------------------------|
-| `Enter` | Open the task's note with the cursor on its line. An already-open note keeps its unsaved changes. |
-| `r`     | Rescan notes and reread `.lattice.json`                                |
+| `Enter` | Open the task's note at the task. If lines moved in an open note, Lattice finds the task by its title. An already-open note keeps its unsaved changes. |
+| `r`     | Rescan the notes that changed and reread `.lattice.json`               |
 | `q`     | Close the dashboard and return to the previous buffer                  |
 | `?`     | Toggle help                                                            |
+
+**Refreshing:** Lattice keeps the notes it has parsed and, on each refresh, re-parses only the ones whose file changed. A note open in Neovim with unsaved changes is read from its buffer. Saving any note under the root refreshes an open dashboard by itself.
 
 ## Adding tasks
 
@@ -215,6 +299,13 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 
 **`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a checked waiting item becomes `DONE`. Sub-items stay below the new heading as a list. `[due:]` on headings becomes `DEADLINE` too. Review the result, then save.
 
+## Refiling and archiving
+
+Both work on the heading under the cursor and everything below it (its subtree), as in Org. They change only buffers, both notes are checked before either is changed, and nothing is saved for you.
+
+- **`<leader>lw` / `:LatticeRefile`** (Org's `C-c C-w`) asks for a target among every heading in every note, shown as `note.md › Etna › Releases`, or "end of note". The subtree moves to the end of the target's subtree, one level below it, with all its headings re-levelled. A subtree can't be refiled under itself, or deeper than `######`.
+- **`<leader>lA` / `:LatticeArchive`** (Org's `C-c C-x C-a`) moves the subtree to the archive note, `<note>_archive.md` beside it by default (`archive.location`). It becomes a top-level heading, with Org's `:ARCHIVE_TIME:`, `:ARCHIVE_FILE:`, `:ARCHIVE_OLPATH:`, `:ARCHIVE_CATEGORY:` and `:ARCHIVE_TODO:` properties. A new archive note starts with a line saying where its entries came from. Archive notes (`**/*_archive.md`) are excluded from scanning by default, so archived tasks leave the dashboard. If `archive.location` points into a folder that doesn't exist, Lattice says so and changes nothing; it never creates folders.
+
 ## Commands and keymaps
 
 | Command              | Default key  | Action                                                  |
@@ -231,9 +322,11 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 | `:LatticeDeadline`   | `<leader>lD` | Set or remove `DEADLINE`                                |
 | `:LatticePriorityUp` / `:LatticePriorityDown` | `<leader>l+` / `<leader>l-` | Raise or lower `[#A]` |
 | `:LatticeMigrate`    |              | Convert this note's v0.1 items to Org headings          |
+| `:LatticeRefile`     | `<leader>lw` | Move the subtree under another heading                  |
+| `:LatticeArchive`    | `<leader>lA` | Move the subtree to the archive note                    |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
-Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate` and `health`.
+Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate`, `refile`, `archive` and `health`.
 
 Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
 
@@ -296,9 +389,10 @@ This file lives in the **notes root**, not in this plugin's repository. Every fi
 | `enforce.checkboxes` | `false`                    | Refuse to complete a task while its checkboxes are unchecked (Org's `org-enforce-todo-checkbox-dependencies`) |
 | `enforce.todo`   | `false`                        | Refuse to complete a task while its child TODO headings are open (Org's `org-enforce-todo-dependencies`) |
 | `repeat_to_state` | —                             | State a completed repeating task returns to; by default its previous state (Org's `org-todo-repeat-to-state`) |
+| `archive.location` | `"%s_archive.md"`            | Archive note for `:LatticeArchive`, relative to the root; `%s` is the note's path without `.md`. Its folder must exist. |
 | `deadlines.warning_days` | `14`                   | Default deadline warning period for DUE SOON, as Org's `org-deadline-warning-days`. A deadline's own `-Nd` wins. |
 | `scan.include`   | `["**/*.md"]`                  | Files to scan. Only `.md` files are ever read.             |
-| `scan.exclude`   | `["Archives/**", ".git/**"]`   | Files and folders to skip. A list you give **replaces** the default, so keep `Archives/**` in it if you want Archives skipped. |
+| `scan.exclude`   | `["Archives/**", ".git/**", "**/*_archive.md"]` | Files and folders to skip. A list you give **replaces** the default, so keep `Archives/**` in it if you want Archives skipped. |
 | `headings.waiting` | `"Waiting On"`               | v0.1: heading whose bullets are waiting items              |
 | `inbox.path`     | `"Inbox"`                      | Folder inside the root listed as the capture inbox         |
 
@@ -333,10 +427,9 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 
 ## Limitations
 
-- **Saved files only.** Lattice reads files from disk. A task you add or check off appears on the dashboard after you save the note and refresh.
-- **Manual refresh.** There is no file watching or background indexing. The dashboard and its line numbers reflect the last scan.
-- **Whole-tree scan.** Every refresh rescans all included notes synchronously. This is fast for typical note collections but not optimized for very large trees.
-- **Org subset, in progress.** Milestones A–D of the spec are done: tasks, workflows, metadata, scheduling, and editing. Still to come: a fuller agenda with project and priority filters, editing from the dashboard, refiling and archiving, and incremental refresh.
+- **Refresh on save, not on every keystroke.** Saving a note, or pressing `r`, refreshes the dashboard. Lattice reads unsaved open buffers when it refreshes, but doesn't watch files changed outside Neovim. There is no background indexing.
+- **Every refresh lists the whole tree.** Unchanged notes aren't re-parsed, but every included file is still listed and checked for changes. This is fast for typical note collections.
+- **Org subset.** All five milestones of the spec are implemented. Lattice is not Org-mode: clocking, tables, links, capture templates, export and Babel are not supported, and the agenda has the views above rather than Org's full custom-agenda system.
 - **Tree-sitter.** Lattice needs Neovim's Markdown parser, which ships with Neovim. A broken parser binary can crash Neovim when it loads; see [Troubleshooting](#troubleshooting).
 - **Symlinks** are skipped entirely (see above).
 - **Not yet built:** WBR preparation, AI-assisted commitment discovery, Portico publishing, and automated Drafts import are planned for later milestones (see [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md) §11). The dashboard doesn't show or pretend to support them.
@@ -373,7 +466,7 @@ Common problems:
 nvim -l tests/run.lua
 ```
 
-The runner executes `tests/parser_spec.lua`, `scanner_spec.lua`, `dashboard_spec.lua`, `insert_spec.lua`, `tasks_spec.lua` and `metadata_spec.lua` headlessly in temporary directories, using only synthetic fixtures. Never add real work notes to this repository.
+The runner executes `tests/parser_spec.lua`, `scanner_spec.lua`, `dashboard_spec.lua`, `insert_spec.lua`, `tasks_spec.lua`, `metadata_spec.lua`, `schedule_spec.lua`, `mutate_spec.lua` and `integration_spec.lua` headlessly in temporary directories, using only synthetic fixtures. Never add real work notes to this repository.
 
 Layout:
 
@@ -384,6 +477,9 @@ lua/lattice/markdown.lua   Markdown block structure from Tree-sitter
 lua/lattice/tasks.lua      tasks, workflows, inheritance, hierarchy
 lua/lattice/metadata.lua   planning lines and property drawers
 lua/lattice/timestamp.lua  Org timestamps
+lua/lattice/schedule.lua   calendar arithmetic, repeaters, agenda status
+lua/lattice/mutate.lua     the mutation layer: every edit, refile, archive
+lua/lattice/agenda.lua     filters, week agenda, TODO list, projects
 lua/lattice/keywords.lua   workflows, sequences, front matter
 lua/lattice/scanner.lua    read-only traversal of the notes root
 lua/lattice/dashboard.lua  dashboard rendering, navigation
