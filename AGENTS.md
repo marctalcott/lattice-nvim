@@ -12,7 +12,7 @@ This repository is Lattice, an independent Neovim/LazyVim plugin. Portico is a d
 - Scanning and dashboard navigation are read-only; insertion commands only edit the current note after an explicit user action.
 - No new database, Electron application, backend service, account, AI SDK, or cloud integration in v0.1.
 - Honor .lattice.json include/exclude patterns relative to the notes root, excluding Archives/** by default.
-- Recognize tasks strictly: items whose first word is a declared org-style TODO keyword (exact case; sequences from `todo` in .lattice.json, overridable per note by YAML front matter `todo:`), and bullets under headings named exactly Waiting On (case-sensitive, after trimming surrounding whitespace) at any heading level. See Amendment A in specs/LATTICE_SPEC.md.
+- Recognize tasks as specs/LATTICE_SYNTAX_SPEC.md §3 defines them (headings starting with a workflow state, every checkbox, and v0.1 keyword bullets), with structure from Neovim's Tree-sitter Markdown parser. Keep reading Lattice v0.1 syntax (Waiting On sections, `@Name`, `[due:]`, `[promised:]`, front matter `todo:`) as specs/ORG_MARKDOWN_PLAN.md D3 describes.
 - Source links must open the original file at its actual line.
 
 ## Development approach

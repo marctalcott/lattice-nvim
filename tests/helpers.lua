@@ -4,7 +4,8 @@ local H = {}
 H.config = require("lattice.config")
 H.dashboard = require("lattice.dashboard")
 H.lattice = require("lattice")
-H.parser = require("lattice.parser")
+H.parser = require("lattice.tasks")
+H.timestamp = require("lattice.timestamp")
 H.scanner = require("lattice.scanner")
 H.insert = require("lattice.insert")
 H.keywords = require("lattice.keywords")
@@ -32,7 +33,7 @@ local config, dashboard, parser = H.config, H.dashboard, H.parser
 local HEADINGS = config.defaults()
 
 local function parse(text)
-  return parser.parse(vim.split(text, "\n", { plain = true }), HEADINGS)
+  return assert(parser.parse(vim.split(text, "\n", { plain = true }), HEADINGS))
 end
 
 local function texts(result)

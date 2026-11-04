@@ -16,6 +16,7 @@ local DEFAULT = assert(keywords.build({ "TODO NEXT WAITING | DONE CANCELED" }))
 local function parse(text, kws)
   local cfg = config.defaults()
   cfg.keywords = kws or DEFAULT
+  cfg.workflows = { default = cfg.keywords }
   return assert(tasks.parse(lines(text), cfg))
 end
 
@@ -116,8 +117,7 @@ test("PAR-006 fenced and indented code produce no tasks", function()
 end)
 
 test("multi-word states match longest first", function()
-  local kws = assert(keywords.build({ "IN | DONE", "BACKLOG READY IN_PROGRESS | COMPLETE" }))
-  kws.states["IN PROGRESS"] = "open" -- multi-word states arrive with .lattice.json workflows
+  local kws = assert(keywords.from_workflow({ active = { "IN", "IN PROGRESS" }, done = { "DONE" } }))
   local r = parse("## IN PROGRESS Migrate cluster\n## IN Draft", kws)
   eq(summary(r), { "heading IN PROGRESS Migrate cluster", "heading IN Draft" })
 end)

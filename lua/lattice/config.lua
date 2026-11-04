@@ -25,12 +25,19 @@ M.options = {
 M.active_keymaps = {}
 
 function M.defaults()
+  local default = assert(keywords.build(keywords.DEFAULT))
   return {
     version = 1,
     scan = { include = { "**/*.md" }, exclude = { "Archives/**", ".git/**" } },
-    -- Org-style keyword sequences for the whole notes root; a note's YAML
-    -- front matter `todo:` replaces them for that note.
-    keywords = assert(keywords.build(keywords.DEFAULT)),
+    -- Workflows by name (LATTICE_SYNTAX_SPEC §4). `default` applies unless
+    -- a task's :WORKFLOW: or project selects another. `keywords` is the
+    -- default workflow, kept under its v0.1 name.
+    workflows = { default = default },
+    keywords = default,
+    priorities = { values = { "A", "B", "C" }, default = "B" },
+    inherit = { tags = true, properties = {} },
+    deadlines = { warning_days = 14 },
+    -- v0.1 legacy: bullets under this heading are read as WAITING.
     headings = { waiting = "Waiting On" },
     inbox = { path = "Inbox" },
   }
@@ -115,7 +122,7 @@ local function validate(raw)
   if raw.version ~= nil and raw.version ~= 1 then
     return nil, ("unsupported version %s (expected 1)"):format(vim.inspect(raw.version))
   end
-  for _, key in ipairs({ "scan", "headings", "inbox" }) do
+  for _, key in ipairs({ "scan", "headings", "inbox", "workflows", "priorities", "inherit", "deadlines" }) do
     if raw[key] ~= nil and type(raw[key]) ~= "table" then
       return nil, key .. " must be a JSON object"
     end
@@ -147,6 +154,80 @@ local function validate(raw)
       return nil, ("todo: %s"):format(err)
     end
     cfg.keywords = built
+    cfg.workflows.default = built
+  end
+
+  if raw.workflows ~= nil then
+    if next(raw.workflows) ~= nil and vim.islist(raw.workflows) then
+      return nil, "workflows must be an object of named workflows"
+    end
+    if raw.todo ~= nil and raw.workflows.default ~= nil then
+      return nil, "set the default workflow in either todo or workflows.default, not both"
+    end
+    for name, workflow in pairs(raw.workflows) do
+      if type(name) ~= "string" or not name:match("^[%w_%-]+$") then
+        return nil, ("workflow name %s must be a single word"):format(vim.inspect(name))
+      end
+      local built, err = keywords.from_workflow(workflow)
+      if not built then
+        return nil, ("workflows.%s: %s"):format(name, err)
+      end
+      cfg.workflows[name:lower()] = built
+    end
+    cfg.keywords = cfg.workflows.default
+  end
+
+  if raw.priorities ~= nil then
+    local values, default = raw.priorities.values, raw.priorities.default
+    if values ~= nil then
+      if not vim.islist(values) or #values == 0 then
+        return nil, "priorities.values must be a non-empty list of single letters or digits"
+      end
+      for _, value in ipairs(values) do
+        if type(value) ~= "string" or not value:match("^%w$") then
+          return nil, ("priorities.values: %s is not a single letter or digit"):format(vim.inspect(value))
+        end
+      end
+      cfg.priorities.values = values
+      if default == nil and not vim.tbl_contains(values, cfg.priorities.default) then
+        cfg.priorities.default = values[math.ceil(#values / 2)]
+      end
+    end
+    if default ~= nil then
+      if not vim.tbl_contains(cfg.priorities.values, default) then
+        return nil, ("priorities.default %s is not one of priorities.values"):format(vim.inspect(default))
+      end
+      cfg.priorities.default = default
+    end
+  end
+
+  if raw.inherit ~= nil then
+    local tags, properties = raw.inherit.tags, raw.inherit.properties
+    if tags ~= nil then
+      if type(tags) ~= "boolean" then
+        return nil, "inherit.tags must be true or false"
+      end
+      cfg.inherit.tags = tags
+    end
+    if properties ~= nil then
+      if properties == true then
+        cfg.inherit.properties = true
+      elseif type(properties) == "table" and vim.islist(properties) then
+        cfg.inherit.properties = vim.tbl_map(function(name)
+          return tostring(name):upper()
+        end, properties)
+      else
+        return nil, "inherit.properties must be true or a list of property names"
+      end
+    end
+  end
+
+  if raw.deadlines ~= nil and raw.deadlines.warning_days ~= nil then
+    local days = raw.deadlines.warning_days
+    if type(days) ~= "number" or days < 0 or days % 1 ~= 0 then
+      return nil, "deadlines.warning_days must be a whole number of days, 0 or more"
+    end
+    cfg.deadlines.warning_days = days
   end
 
   if headings.waiting ~= nil then

@@ -1,28 +1,44 @@
--- Task identification and hierarchy (LATTICE_SYNTAX_SPEC §3, §11, §12),
--- built on the Markdown structure from markdown.lua.
+-- Task identification, metadata, workflows and hierarchy
+-- (LATTICE_SYNTAX_SPEC §3–§7, §11, §12), on the structure from markdown.lua.
 --
 -- A task is:
---   * an ATX heading whose text starts with a workflow state (§3.1);
+--   * an ATX heading whose text starts with a state of its workflow (§3.1);
 --   * a list item with a task marker, `- [ ]` / `- [x]` / `1. [ ]` (§3.2);
---   * a list item without a marker whose text starts with a workflow state,
---     `- TODO x` (Extended: Lattice v0.1 syntax kept as a task).
+--   * a list item without a marker whose text starts with a state,
+--     `- TODO x` (Extended: Lattice v0.1 syntax kept as a task);
+--   * v0.1 legacy: a top-level bullet under a `Waiting On` heading.
 -- Every list-item task has kind "checkbox"; `checkbox` is nil for the last
--- form. Each task's parent is its nearest enclosing task, heading or item.
+-- two forms. Each task's parent is its nearest enclosing task.
+--
+-- Nodes (headings and list items) are visited in source order, so a node's
+-- ancestors are resolved first: their inherited properties, tags, project
+-- and workflow form its context.
 local keywords = require("lattice.keywords")
 local markdown = require("lattice.markdown")
+local metadata = require("lattice.metadata")
+local timestamp = require("lattice.timestamp")
 
 local M = {}
 
--- Workflow states, longest first, so a multi-word state such as
--- "IN PROGRESS" wins over a shorter one that is a prefix of it.
-local function ordered_states(states)
-  local list = vim.tbl_keys(states)
+-- Properties every node inherits (D2), on top of `properties.inherit`.
+local ALWAYS_INHERITED = { PROJECT = true, WORKFLOW = true }
+
+-- States longest first, so "IN PROGRESS" wins over a shorter prefix.
+local function ordered_states(kws)
+  if kws.ordered then
+    return kws.ordered
+  end
+  local list = {}
+  for state in pairs(kws.states) do
+    list[#list + 1] = state
+  end
   table.sort(list, function(a, b)
     if #a ~= #b then
       return #a > #b
     end
     return a < b
   end)
+  kws.ordered = list
   return list
 end
 
@@ -30,8 +46,8 @@ end
 --- (exact case) followed by whitespace and a non-empty title.
 --- @return string|nil state
 --- @return string title  the whole text when there is no state
-function M.split_state(text, ordered)
-  for _, state in ipairs(ordered) do
+function M.split_state(text, kws)
+  for _, state in ipairs(ordered_states(kws)) do
     if text:sub(1, #state) == state then
       local title = text:sub(#state + 1):match("^[ \t]+(.-)%s*$")
       if title and title ~= "" then
@@ -42,12 +58,11 @@ function M.split_state(text, ordered)
   return nil, text
 end
 
--- The first done state of the sequence holding the first open state, used
--- for a checked box without an explicit state (§3.3).
+-- Default unfinished and done states for a box without an explicit state
+-- (§3.3): the first of each kind in the workflow's first sequence.
 local function default_states(kws)
-  local first_cycle = kws.cycles[1] or {}
   local open, done
-  for _, state in ipairs(first_cycle) do
+  for _, state in ipairs(kws.cycles[1] or {}) do
     if kws.states[state] == "open" then
       open = open or state
     else
@@ -57,11 +72,63 @@ local function default_states(kws)
   return open, done
 end
 
-local function new_task(kind, line, stop, title)
+-- Trailing Org tags " :a:b:" (§6.1). Returns the text without them and
+-- the tag list.
+local function split_tags(text)
+  local before, tags = text:match("^(.-)%s+(:[%w_@#%%:]+:)%s*$")
+  if not before then
+    tags = text:match("^(:[%w_@#%%:]+:)%s*$")
+    before = tags and "" or text
+  end
+  local list = {}
+  for tag in (tags or ""):gmatch("[^:]+") do
+    list[#list + 1] = tag
+  end
+  return before, list
+end
+
+local function word_list(value)
+  local list = {}
+  for word in (value or ""):gsub(":", " "):gmatch("%S+") do
+    list[#list + 1] = word
+  end
+  return list
+end
+
+-- v0.1 inline dates: [due:YYYY-MM-DD], and [promised:...] on waiting items.
+local function legacy_dates(text, waiting, bad)
+  local dates = {}
+  for _, tag in ipairs(waiting and { "due", "promised" } or { "due" }) do
+    for value in text:gmatch("%[" .. tag .. ":([^%]]*)%]") do
+      if timestamp.valid_date(value) then
+        dates[tag] = dates[tag] or value
+      else
+        bad[#bad + 1] = { tag = tag, value = value }
+      end
+    end
+    text = vim.trim((text:gsub("[ \t]*%[" .. tag .. ":[^%]]*%][ \t]*", " ")))
+  end
+  return text, dates
+end
+
+local function merge_tags(inherited, own)
+  local seen, list = {}, {}
+  for _, source in ipairs({ inherited, own }) do
+    for _, tag in ipairs(source) do
+      if not seen[tag] then
+        seen[tag] = true
+        list[#list + 1] = tag
+      end
+    end
+  end
+  return list
+end
+
+local function new_task(kind, line, stop)
   return {
     id = nil,
     kind = kind,
-    title = title,
+    title = "",
     state = nil,
     done = false,
     checkbox = nil,
@@ -70,52 +137,157 @@ local function new_task(kind, line, stop, title)
     deadline = nil,
     closed = nil,
     recurrence = nil,
-    tags = {},
-    properties = {},
+    tags = {}, -- local tags
+    inherited_tags = {},
+    properties = {}, -- local, UPPERCASE keys
+    property_names = {}, -- original spelling
+    inherited_properties = {},
     parent = nil, -- index into the file's task list
     children = {},
     project = nil,
     workflow = nil,
     line = line,
     source = { start_line = line, end_line = stop },
-    diagnostics = {},
+    legacy = {},
   }
 end
 
 --- Parses one note.
 --- @param lines string[]
---- @param cfg { keywords: table }  keywords: the root keyword table
---- @return { tasks: table[], diagnostics: table[], keywords: table }|nil
+--- @param cfg table  config.defaults() shape: keywords, workflows, priorities,
+---   inherit, headings
+--- @return table|nil result  { tasks, diagnostics, keywords, keywords_at,
+---   sections, date_errors, warnings, legacy, front_matter }
 --- @return string|nil err  when the Markdown parser is unavailable
 function M.parse(lines, cfg)
   local structure, err = markdown.parse(lines)
   if not structure then
     return nil, err
   end
-  local result = { tasks = {}, diagnostics = {}, keywords = cfg.keywords }
+  local workflows = cfg.workflows or { default = cfg.keywords }
+  local priorities = cfg.priorities or { values = { "A", "B", "C" } }
+  local inherit = cfg.inherit or { tags = true, properties = {} }
+  local waiting_heading = (cfg.headings or {}).waiting
+
+  local result = {
+    tasks = {},
+    diagnostics = {},
+    keywords = workflows.default or cfg.keywords,
+    keywords_at = {}, -- line of each heading and list item -> its keyword table
+    sections = {}, -- v0.1 Waiting On sections, for insertion
+    date_errors = {}, -- v0.1 invalid [due:] dates on open tasks
+    warnings = {}, -- diagnostics shown on the dashboard
+    legacy = {}, -- { line, form } for v0.1 syntax still in use
+    front_matter = structure.front_matter,
+  }
 
   local function diagnose(line, severity, category, message)
-    result.diagnostics[#result.diagnostics + 1] =
-      { line = line, severity = severity, category = category, message = message }
+    local entry = { line = line, severity = severity, category = category, message = message }
+    result.diagnostics[#result.diagnostics + 1] = entry
+    result.warnings[#result.warnings + 1] = entry
+  end
+  local function warn(line, category, message)
+    diagnose(line, "warning", category, message)
   end
 
-  -- Per-note sequences from front matter `todo:` (Lattice v0.1 syntax).
+  -- File-level context: front matter `todo:` (v0.1), `project:`, `workflow:`.
+  local file_kws
   local sequences, todo_line = keywords.front_matter(lines)
   if sequences then
     local own, build_err = keywords.build(sequences)
     if own then
+      file_kws = own
       result.keywords = own
     else
-      diagnose(todo_line, "warning", "workflow", ("front matter todo: %s; using the root keywords"):format(build_err))
+      warn(todo_line, "workflow", ("front matter todo: %s; using the root keywords"):format(build_err))
     end
   end
-  local kws = result.keywords
-  local ordered = ordered_states(kws.states)
-  local default_open, default_done = default_states(kws)
+  local root_props = {}
+  for _, key in ipairs({ "project", "workflow" }) do
+    root_props[key:upper()] = keywords.front_matter_scalar(lines, key)
+  end
+  local root = { props = root_props, tags = {} }
 
-  -- Tasks are collected in source order: headings and items interleave by line.
-  -- heading/item index -> task index, and back (task index -> source).
-  local heading_task, item_task, source_of = {}, {}, {}
+  -- Which keyword table applies, from a node's effective properties.
+  local function resolve(props, project, line)
+    local name = props.WORKFLOW and props.WORKFLOW:lower()
+    if name and not workflows[name] then
+      warn(line, "unknown-workflow", ("workflow %q is not configured; using the default"):format(props.WORKFLOW))
+      name = nil
+    end
+    if not name and project and workflows[project:lower()] then
+      name = project:lower()
+    end
+    if name then
+      return workflows[name], name
+    end
+    if file_kws then
+      return file_kws, "file"
+    end
+    return workflows.default or cfg.keywords, "default"
+  end
+
+  -- States that belong to some workflow, to flag ones used out of place.
+  local known_elsewhere = {}
+  for _, kws in pairs(workflows) do
+    for state in pairs(kws.states) do
+      known_elsewhere[state] = true
+    end
+  end
+
+  local priority_ok = {}
+  for _, value in ipairs(priorities.values) do
+    priority_ok[value] = true
+  end
+
+  -- Child structure bounds, for where a node's own metadata can be.
+  local first_child_heading, first_child_item = {}, {}
+  for _, heading in ipairs(structure.headings) do
+    if heading.parent and not first_child_heading[heading.parent] then
+      first_child_heading[heading.parent] = heading.line
+    end
+  end
+  for _, item in ipairs(structure.items) do
+    if item.parent and not first_child_item[item.parent] then
+      first_child_item[item.parent] = item.line
+    end
+  end
+
+  -- v0.1 Waiting On sections end at the next heading of any level,
+  -- setext headings included.
+  local boundaries = {}
+  for _, heading in ipairs(structure.headings) do
+    boundaries[#boundaries + 1] = heading.line
+  end
+  for _, line in ipairs(structure.setext) do
+    boundaries[#boundaries + 1] = line
+  end
+  table.sort(boundaries)
+  for _, heading in ipairs(structure.headings) do
+    if waiting_heading and heading.text == waiting_heading then
+      local stop = #lines
+      for _, line in ipairs(boundaries) do
+        if line > heading.line then
+          stop = line - 1
+          break
+        end
+      end
+      local last = stop
+      while last > heading.line and vim.trim(lines[last] or "") == "" do
+        last = last - 1
+      end
+      result.sections[#result.sections + 1] = { kind = "waiting", line = heading.line, stop = stop, last = last }
+    end
+  end
+  local function in_waiting_section(line)
+    for _, section in ipairs(result.sections) do
+      if line > section.line and line <= section.stop then
+        return true
+      end
+    end
+    return false
+  end
+
   local entries = {}
   for index, heading in ipairs(structure.headings) do
     entries[#entries + 1] = { line = heading.line, heading = index }
@@ -127,60 +299,245 @@ function M.parse(lines, cfg)
     return a.line < b.line
   end)
 
+  local heading_ctx, item_ctx = {}, {}
+  local heading_task, item_task, source_of = {}, {}, {}
+
   for _, entry in ipairs(entries) do
-    local task
+    local node, parent_ctx, text, first, last
     if entry.heading then
-      local heading = structure.headings[entry.heading]
-      local state, title = M.split_state(heading.text, ordered)
+      node = structure.headings[entry.heading]
+      parent_ctx = node.parent and heading_ctx[node.parent] or root
+      text = node.text
+      first = node.line + 1
+      local limit = node.stop
+      if first_child_heading[entry.heading] then
+        limit = math.min(limit, first_child_heading[entry.heading] - 1)
+      end
+      last = limit
+    else
+      node = structure.items[entry.item]
+      parent_ctx = node.parent and item_ctx[node.parent] or (node.heading and heading_ctx[node.heading]) or root
+      text = node.text
+      first = node.line + 1
+      last = first_child_item[entry.item] and first_child_item[entry.item] - 1 or node.stop
+    end
+
+    local meta = metadata.read(lines, first, last, function(line, category, message)
+      warn(line, category, message)
+    end)
+
+    -- Effective properties: inherited, then this node's own.
+    local props = {}
+    for key, value in pairs(parent_ctx.props) do
+      props[key] = value
+    end
+    for key, value in pairs(meta.properties) do
+      props[key] = value
+    end
+
+    -- Heading text: tags come off the end first.
+    local own_tags = {}
+    if entry.heading then
+      text, own_tags = split_tags(text)
+    else
+      own_tags = word_list(meta.properties.TAGS)
+    end
+    local inherited_tags = inherit.tags and parent_ctx.tags or {}
+
+    -- Project (D2): explicit property, else a top-level heading naming a
+    -- configured workflow, else the parent's.
+    local project = props.PROJECT or parent_ctx.project
+    if not props.PROJECT and entry.heading and node.level == 1 then
+      local name = text
+      local maybe_state, rest = M.split_state(text, workflows.default or cfg.keywords)
+      if maybe_state then
+        name = rest
+      end
+      local key = name:lower()
+      if key ~= "default" and workflows[key] then
+        project = name
+      end
+    end
+
+    local kws, workflow_name = resolve(props, project, node.line)
+    result.keywords_at[node.line] = kws
+
+    -- Context handed to descendants.
+    local ctx = { props = {}, tags = merge_tags(inherited_tags, own_tags), project = project }
+    for key, value in pairs(props) do
+      if ALWAYS_INHERITED[key] or inherit.properties == true or (type(inherit.properties) == "table" and vim.tbl_contains(inherit.properties, key)) then
+        ctx.props[key] = value
+      end
+    end
+    if entry.heading then
+      heading_ctx[entry.heading] = ctx
+    else
+      item_ctx[entry.item] = ctx
+    end
+
+    -- Identification.
+    local state, title = M.split_state(text, kws)
+    local task
+    local in_waiting = entry.item and in_waiting_section(node.line)
+    -- v0.1: a top-level unordered bullet in Waiting On is a task by itself.
+    local legacy_plain = in_waiting and not node.parent and not node.ordered
+    local legacy_waiting = false
+    if entry.heading then
       if state then
-        task = new_task("heading", heading.line, heading.stop, title)
-        task.level = heading.level
+        task = new_task("heading", node.line, node.stop)
+        task.level = node.level
         task.state = state
         task.done = kws.states[state] == "done"
-        heading_task[entry.heading] = #result.tasks + 1
-        source_of[#result.tasks + 1] = entry
+      else
+        local word = text:match("^(%u[%u_%-]*)%s+%S")
+        if word and known_elsewhere[word] then
+          warn(node.line, "unknown-state", ("%s is not a state in this heading's workflow (%s)"):format(word, workflow_name))
+        end
       end
     else
-      local item = structure.items[entry.item]
-      local state, title = M.split_state(item.text, ordered)
-      if item.checkbox or state then
-        task = new_task("checkbox", item.line, item.stop, title)
-        task.checkbox = item.checkbox
-        task.ordered = item.ordered
+      local explicit = meta.properties.STATE
+      if (node.checkbox or state or explicit or legacy_plain) and title ~= "" then
+        task = new_task("checkbox", node.line, node.stop)
+        task.checkbox = node.checkbox
+        task.ordered = node.ordered
         task.keyword = state
-        if item.checkbox then
-          local checked = item.checkbox ~= " "
-          task.state = state or (checked and default_done or default_open)
-          -- The marker is basic completion (§3.3 rule 1).
-          task.done = checked
-          if state and (kws.states[state] == "done") ~= checked then
-            diagnose(
-              item.line,
-              "warning",
-              "state-conflict",
-              ("%s is %s but the box is %s"):format(
-                state,
-                kws.states[state] == "done" and "a done state" or "an unfinished state",
-                checked and "checked" or "unchecked"
+        local default_open, default_done = default_states(kws)
+        if explicit then
+          explicit = vim.trim(explicit)
+          if state and state ~= explicit then
+            warn(node.line, "state-conflict", ("the item says %s but :STATE: is %s; using %s"):format(state, explicit, explicit))
+          end
+          if not kws.states[explicit] then
+            warn(node.line, "unknown-state", (":STATE: %s is not a state in this item's workflow (%s)"):format(explicit, workflow_name))
+          end
+          state = explicit
+        end
+        if not state and legacy_plain then
+          legacy_waiting = true
+        end
+        if node.checkbox then
+          local checked = node.checkbox ~= " "
+          task.done = checked -- the box is basic completion (§3.3 rule 1)
+          if state then
+            local kind = kws.states[state]
+            if kind and (kind == "done") ~= checked then
+              warn(
+                node.line,
+                "state-conflict",
+                ("%s is %s but the box is %s"):format(
+                  state,
+                  kind == "done" and "a done state" or "an unfinished state",
+                  checked and "checked" or "unchecked"
+                )
               )
-            )
+            end
+          else
+            state = checked and default_done or (legacy_waiting and kws.states.WAITING and "WAITING") or default_open
           end
         else
-          task.state = state
+          if not state and legacy_waiting then
+            state = kws.states.WAITING and "WAITING" or default_open
+          end
           task.done = kws.states[state] == "done"
         end
-        item_task[entry.item] = #result.tasks + 1
-        source_of[#result.tasks + 1] = entry
+        task.state = state
       end
     end
 
     if task then
-      result.tasks[#result.tasks + 1] = task
+      local index = #result.tasks + 1
+      if entry.heading then
+        heading_task[entry.heading] = index
+      else
+        item_task[entry.item] = index
+      end
+      source_of[index] = entry
+
+      -- Priority (§5): [#A] after a heading's state; :PRIORITY: otherwise.
+      if entry.heading then
+        local value, rest = title:match("^%[#(%w)%]%s*(.*)$")
+        if value then
+          title = rest
+          if priority_ok[value] then
+            task.priority = value
+          else
+            warn(node.line, "invalid-priority", ("[#%s] is not a configured priority"):format(value))
+          end
+        end
+      end
+      local prop_priority = meta.properties.PRIORITY
+      if prop_priority and prop_priority ~= "" then
+        prop_priority = vim.trim(prop_priority):gsub("^%[?#?", ""):gsub("%]$", "")
+        if priority_ok[prop_priority] then
+          task.priority = task.priority or prop_priority
+        else
+          warn(node.line, "invalid-priority", (":PRIORITY: %s is not a configured priority"):format(prop_priority))
+        end
+      end
+
+      -- v0.1 forms: @Name on waiting items, [due:] and [promised:].
+      -- v0.1: every task in a Waiting On section is a waiting item.
+      local waiting = state == "WAITING" or in_waiting
+      if waiting and not meta.properties.ASSIGNED then
+        local name, rest = title:match("^@(%S+)[ \t]*(.*)$")
+        if name then
+          title = rest
+          task.legacy.assigned = name
+          result.legacy[#result.legacy + 1] = { line = node.line, form = "@Name" }
+        end
+      end
+      local bad = {}
+      local dates
+      title, dates = legacy_dates(title, waiting, bad)
+      if dates.due then
+        task.legacy.due = dates.due
+        result.legacy[#result.legacy + 1] = { line = node.line, form = "[due:]" }
+      end
+      if dates.promised then
+        task.legacy.promised = dates.promised
+        result.legacy[#result.legacy + 1] = { line = node.line, form = "[promised:]" }
+      end
+      if in_waiting then
+        result.legacy[#result.legacy + 1] = { line = node.line, form = "Waiting On section" }
+      end
+      if not task.done then
+        for _, entry_bad in ipairs(bad) do
+          entry_bad.line = node.line
+          result.date_errors[#result.date_errors + 1] = entry_bad
+        end
+      end
+
+      task.title = title
+      task.tags = own_tags
+      task.inherited_tags = {}
+      for _, tag in ipairs(inherited_tags) do
+        if not vim.tbl_contains(own_tags, tag) then
+          task.inherited_tags[#task.inherited_tags + 1] = tag
+        end
+      end
+      task.properties = meta.properties
+      task.property_names = meta.names
+      task.inherited_properties = parent_ctx.props
+      task.id = meta.properties.ID
+      task.scheduled, task.deadline, task.closed = meta.scheduled, meta.deadline, meta.closed
+      task.recurrence = (meta.scheduled and meta.scheduled.repeater) or (meta.deadline and meta.deadline.repeater)
+      task.planning_lines = meta.planning_lines
+      task.drawer = meta.drawer
+      task.project = project
+      task.workflow = workflow_name
+
+      -- Fields the v0.1 dashboard reads.
+      task.text = title
+      task.section = waiting and "waiting" or "todo"
+      task.person = meta.properties.ASSIGNED or props.ASSIGNED or task.legacy.assigned
+      task.due = task.deadline and task.deadline.date or task.legacy.due
+      task.promised = meta.properties.PROMISED or task.legacy.promised
+
+      result.tasks[index] = task
     end
   end
 
-  -- Hierarchy: the nearest enclosing task, looking through list items
-  -- first, then headings.
+  -- Hierarchy: the nearest enclosing task, through list items, then headings.
   local function heading_ancestor(index)
     while index do
       if heading_task[index] then
@@ -189,10 +546,9 @@ function M.parse(lines, cfg)
       index = structure.headings[index].parent
     end
   end
-
   for index, task in ipairs(result.tasks) do
-    local parent
     local entry = source_of[index]
+    local parent
     if entry.heading then
       parent = heading_ancestor(structure.headings[entry.heading].parent)
     else
@@ -205,6 +561,18 @@ function M.parse(lines, cfg)
     if parent then
       task.parent = parent
       table.insert(result.tasks[parent].children, index)
+    end
+  end
+
+  -- Duplicate IDs within the note (§13.4); the scanner checks across notes.
+  local seen_ids = {}
+  for _, task in ipairs(result.tasks) do
+    if task.id then
+      if seen_ids[task.id] then
+        warn(task.line, "duplicate-id", (":ID: %s is also used on line %d"):format(task.id, seen_ids[task.id]))
+      else
+        seen_ids[task.id] = task.line
+      end
     end
   end
 

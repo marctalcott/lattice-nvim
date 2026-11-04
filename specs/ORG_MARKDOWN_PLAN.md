@@ -30,9 +30,9 @@ Not every note or task belongs to a project. A task's project is, in order:
 2. the enclosing top-level `#` heading, **only** when its text names a configured project (a key of `workflows` other than `default`, compared case-insensitively). This satisfies the §15 fixtures (`# Etna` → Etna) without turning `# Meeting notes` into a project;
 3. otherwise none.
 
-Workflow resolution (§4.2): `:WORKFLOW:` property (inherited) → the project's workflow → front matter `todo:` (v0.1, per note) → `default`.
+Workflow resolution (§4.2): `:WORKFLOW:` property (inherited) → the project's workflow → front matter `todo:` (v0.1, per note) → `default`. A heading whose first word is a state of some other workflow is reported as `unknown-state` (PAR-014 for headings).
 
-*Pending PO confirmation; lands in milestone B.*
+Confirmed by the PO on 2026-11-03; implemented in milestone B.
 
 ### D3. v0.1 syntax: read both, migrate on request (PO, 2026-11-03)
 
@@ -74,6 +74,14 @@ States may contain spaces (`IN PROGRESS`), matched exactly and longest first. Or
 - Tasks without `:ID:` are identified by path plus heading/item text path, re-resolved before each edit (§18.5, §14.2 source validation).
 - Setext headings are not tasks; the spec's grammar is ATX only (§3.1).
 - List items inside block quotes are tasks like any other.
+
+### D10. The default workflow is the spec's (§4.1)
+
+`TODO NEXT WAITING | DONE CANCELED`, replacing v0.1's `TODO | DONE`. A note's v0.1 `Waiting On` items get `WAITING` when their workflow has it.
+
+### D11. Dashboard during milestones B–D
+
+The v0.1 dashboard groups stay until the agenda (milestone E). WAITING ON shows tasks in the `WAITING` state plus v0.1 `Waiting On` items; the date column is the `DEADLINE` (or v0.1 `[due:]`). Rows show state, priority, assignee and local tags.
 
 ## Compatibility classification (§2.2)
 

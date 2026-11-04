@@ -6,7 +6,8 @@ local keywords = require("lattice.keywords")
 local function with_sequences(sequences, text)
   local cfg = config.defaults()
   cfg.keywords = assert(keywords.build(sequences))
-  return parser.parse(vim.split(text, "\n", { plain = true }), cfg)
+  cfg.workflows = { default = cfg.keywords }
+  return assert(parser.parse(vim.split(text, "\n", { plain = true }), cfg))
 end
 
 local function states(result)
@@ -79,8 +80,11 @@ test("nested bullets count when they carry a keyword", function()
   eq(texts(result), { "Child", "Grandchild" })
 end)
 
-test("a checkbox before the keyword is allowed; [x] or a done keyword means done", function()
-  eq(states(parse("- [ ] TODO A\n- [x] TODO B\n- [X] TODO C\n- [ ] DONE D")), { "TODO", "TODO x", "TODO x", "DONE x" })
+test("a checkbox before the keyword is allowed; the box decides completion (spec §3.3)", function()
+  local result = parse("- [ ] TODO A\n- [x] TODO B\n- [X] TODO C\n- [ ] DONE D")
+  eq(states(result), { "TODO", "TODO x", "TODO x", "DONE" })
+  -- B, C and D disagree with their box: each is a diagnostic.
+  eq(#result.warnings, 3)
 end)
 
 test("keywords in code fences and indented code are ignored", function()
@@ -92,8 +96,9 @@ test("an unclosed fence hides everything after it", function()
   eq(texts(parse("- TODO One\n```\n- TODO Two")), { "One" })
 end)
 
-test("ordered items and prose are not tasks", function()
-  eq(#parse("1. TODO Numbered\nTODO in prose\nSome text TODO").tasks, 0)
+test("prose is never a task; ordered items are, like bullets (spec §3.2)", function()
+  eq(#parse("TODO in prose\nSome text TODO").tasks, 0)
+  eq(texts(parse("1. TODO Numbered\n2. [ ] Boxed\n3. plain")), { "Numbered", "Boxed" })
 end)
 
 test("reports source lines, handling CRLF and a BOM", function()
@@ -138,7 +143,7 @@ end)
 
 test("front matter without todo, or not at the top, changes nothing", function()
   eq(texts(parse("---\ntitle: x\n---\n- TODO A")), { "A" })
-  eq(texts(parse("# Title\n---\ntodo: NEXT | DONE\n---\n- TODO A\n- NEXT B")), { "A" })
+  eq(texts(parse("# Title\n---\ntodo: ASK | DONE\n---\n- TODO A\n- ASK B")), { "A" })
   -- An unclosed front matter block is ordinary text.
   eq(texts(parse("---\ntodo: NEXT | DONE\n- TODO A")), { "A" })
 end)
@@ -280,16 +285,16 @@ test("promised is not a tag on my items", function()
 end)
 
 test("validates leap days", function()
-  eq(parser.valid_date("2028-02-29"), true)
-  eq(parser.valid_date("2026-02-29"), false)
-  eq(parser.valid_date("1900-02-29"), false)
-  eq(parser.valid_date("2000-02-29"), true)
+  eq(H.timestamp.valid_date("2028-02-29"), true)
+  eq(H.timestamp.valid_date("2026-02-29"), false)
+  eq(H.timestamp.valid_date("1900-02-29"), false)
+  eq(H.timestamp.valid_date("2000-02-29"), true)
 end)
 
 -- Examples -------------------------------------------------------------------
 
-test("examples/sample-notes.md parses as its comments describe", function()
-  local lines = vim.fn.readfile(H.repo .. "/examples/sample-notes.md")
+test("examples/legacy-v0.1-notes.md parses as its comments describe", function()
+  local lines = vim.fn.readfile(H.repo .. "/examples/legacy-v0.1-notes.md")
   local result = parser.parse(lines, H.HEADINGS)
   local summary = vim.tbl_map(function(t)
     return ("%d %s %s %s %s %s"):format(
@@ -308,9 +313,9 @@ test("examples/sample-notes.md parses as its comments describe", function()
     "15 todo DONE x  ",
     "16 todo CANCELED x  ",
     "17 todo TODO -  ",
-    "20 waiting - - Raju 2026-11-06",
-    "21 waiting - - Asha 2026-11-09",
-    "22 waiting - -  ",
+    "20 waiting WAITING - Raju 2026-11-06",
+    "21 waiting WAITING - Asha 2026-11-09",
+    "22 waiting WAITING -  ",
     "23 waiting DONE x Lee ",
     "25 todo NEXT -  ",
   })

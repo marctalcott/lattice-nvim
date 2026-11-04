@@ -147,6 +147,11 @@ local function task_label(task)
     spans[#spans + 1] = { col = 0, len = #task.state, hl = task.done and "DiagnosticOk" or "Todo" }
     label = task.state .. " "
   end
+  if task.priority then
+    local cookie = "[#" .. task.priority .. "]"
+    spans[#spans + 1] = { col = #label, len = #cookie, hl = "Special" }
+    label = label .. cookie .. " "
+  end
   local person = task.person
   if task.section == "waiting" then
     person = person or "Unassigned"
@@ -155,7 +160,14 @@ local function task_label(task)
     spans[#spans + 1] = { col = #label, len = #person, hl = "Identifier" }
     label = label .. person .. " — "
   end
-  return label .. (task.text ~= "" and task.text or "(no description)"), spans
+  label = label .. (task.text ~= "" and task.text or "(no description)")
+  local tags = task.tags or {}
+  if #tags > 0 then
+    local text = " :" .. table.concat(tags, ":") .. ":"
+    spans[#spans + 1] = { col = #label + 1, len = #text - 1, hl = "Comment" }
+    label = label .. text
+  end
+  return label, spans
 end
 
 -- Width of the widest task label, capped, so dates line up across groups.
@@ -335,8 +347,8 @@ function M.render(result, today, opts)
     local headings = result.headings or defaults.headings
     local sequences = (result.keywords or defaults.keywords).sequences
     add("No open tasks found.", "Title")
-    add(('  Lattice lists items that start with a keyword (%s),'):format(table.concat(sequences, "; ")))
-    add(('  such as "- TODO Send update", and bullets under "%s" headings.'):format(headings.waiting))
+    add("  Lattice lists checkboxes (- [ ] …) and headings or bullets that start")
+    add(('  with a state (%s), such as "## TODO Plan".'):format(table.concat(sequences, "; ")))
     add("")
   end
 

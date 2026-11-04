@@ -1,5 +1,6 @@
 -- :checkhealth lattice (also :LatticeHealth). Runs a fresh, read-only scan.
 local config = require("lattice.config")
+local markdown = require("lattice.markdown")
 local scanner = require("lattice.scanner")
 
 local M = {}
@@ -16,6 +17,11 @@ function M.report(result)
   end
 
   add("info", "Neovim " .. tostring(vim.version()))
+  if markdown.available() then
+    add("ok", "Markdown Tree-sitter parser loaded")
+  else
+    add("error", "No Markdown Tree-sitter parser: Lattice cannot read notes. Run :checkhealth vim.treesitter")
+  end
   if result.error then
     add("error", result.error)
     return items
@@ -56,6 +62,27 @@ function M.report(result)
   end
 
   add("info", "Keyword sequences (root): " .. table.concat(result.keywords.sequences, "; "))
+  local names = vim.tbl_keys(result.workflows or {})
+  table.sort(names)
+  for _, name in ipairs(names) do
+    if name ~= "default" then
+      add("info", ("Workflow %s: %s"):format(name, table.concat(result.workflows[name].sequences, "; ")))
+    end
+  end
+
+  if result.legacy and #result.legacy > 0 then
+    local counts, forms = {}, {}
+    for _, entry in ipairs(result.legacy) do
+      if not counts[entry.form] then
+        forms[#forms + 1] = entry.form
+      end
+      counts[entry.form] = (counts[entry.form] or 0) + 1
+    end
+    local parts = vim.tbl_map(function(form)
+      return ("%s (%d)"):format(form, counts[form])
+    end, forms)
+    add("info", "Lattice v0.1 syntax still in use, read as before: " .. table.concat(parts, ", "))
+  end
 
   for _, conflict in ipairs(M.keymap_conflicts) do
     add("warn", ("Keymap %s (%s) not set: the key was already mapped"):format(conflict.lhs, conflict.action))

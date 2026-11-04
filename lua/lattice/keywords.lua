@@ -2,7 +2,8 @@
 -- Pure Lua: no Neovim API, so it is easy to test.
 local M = {}
 
-M.DEFAULT = { "TODO | DONE" }
+-- LATTICE_SYNTAX_SPEC §4.1 default workflow.
+M.DEFAULT = { "TODO NEXT WAITING | DONE CANCELED" }
 
 local function words(text)
   local list = {}
@@ -88,6 +89,65 @@ function M.build(sequences)
   return result
 end
 
+local function is_list(value)
+  if type(value) ~= "table" then
+    return false
+  end
+  local count = 0
+  for _ in pairs(value) do
+    count = count + 1
+  end
+  return count == #value
+end
+
+--- Builds a keyword table from a workflow in the spec's shape,
+--- `{ active = { "TODO", "IN PROGRESS" }, done = { "DONE" } }`. States may
+--- contain spaces (Extended: Org keywords cannot).
+--- @return table|nil kws  same shape as build()
+--- @return string|nil err
+function M.from_workflow(workflow)
+  if type(workflow) ~= "table" then
+    return nil, "a workflow must be an object with active and done lists"
+  end
+  local result = { states = {}, sequences = {}, cycles = {} }
+  local cycle = {}
+  for _, kind in ipairs({ "active", "done" }) do
+    local list = workflow[kind]
+    if list == nil then
+      list = {}
+    end
+    if not is_list(list) then
+      return nil, kind .. " must be a list of state names"
+    end
+    for _, state in ipairs(list) do
+      if type(state) ~= "string" then
+        return nil, ("%s contains a non-string state"):format(kind)
+      end
+      state = state:gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
+      if state == "" or state:find("|", 1, true) or not state:match("^[%w_%- ]+$") then
+        return nil, ("%q is not a valid state name"):format(state)
+      end
+      local value = kind == "active" and "open" or "done"
+      if result.states[state] and result.states[state] ~= value then
+        return nil, ("%s is both an active and a done state"):format(state)
+      end
+      if not result.states[state] then
+        cycle[#cycle + 1] = state
+      end
+      result.states[state] = value
+      if value == "open" then
+        result.first_open = result.first_open or state
+      end
+    end
+  end
+  if #cycle == 0 then
+    return nil, "a workflow needs at least one state"
+  end
+  result.cycles[1] = cycle
+  result.sequences[1] = table.concat(workflow.active or {}, " ") .. " | " .. table.concat(workflow.done or {}, " ")
+  return result
+end
+
 -- A scalar from YAML: trims, drops a trailing " # comment" outside quotes,
 -- and removes surrounding quotes.
 local function scalar(value)
@@ -125,6 +185,19 @@ end
 -- not front matter (for example a note that opens with a horizontal rule).
 local function yaml_line(line)
   return line:match("^%s*$") or key_line(line) or line:match("^%s") or line:match("^%-%s") or line:match("^%-$")
+end
+
+--- The value of a scalar key such as `project:` in the note's YAML front
+--- matter, or nil. Only simple `key: value` lines are read.
+function M.front_matter_scalar(lines, key)
+  local _, _, last = M.front_matter(lines)
+  for i = 2, last - 1 do
+    local value = (lines[i] or ""):gsub("\r$", ""):match("^" .. key .. ":%s*(.-)%s*$")
+    if value then
+      value = scalar((value:gsub("^#.*$", "")))
+      return value ~= "" and value or nil
+    end
+  end
 end
 
 --- Reads the `todo` key from YAML front matter at the top of a note:

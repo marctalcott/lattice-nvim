@@ -1,35 +1,56 @@
 ---
 title: November 2 — Project Review
-todo: TODO NEXT | DONE CANCELED
 ---
 
-# November 2 — Project Review
+# Etna :engineering:
 
-Synthetic example. Notes can be completely freeform. Lattice reads items that
-start with a keyword, plus bullets under the `Waiting On` heading. The `todo:`
-line above sets this note's keywords, replacing the root sequences.
+Synthetic example. Notes stay freeform. Lattice reads headings that start
+with a state, every checkbox, and the planning lines and property drawers
+directly below them. `# Etna` names a project with its own workflow in
+.lattice.json, so its states apply here.
 
-- TODO Prepare revised staffing plan
-- NEXT Send project update [due:2026-11-05]
-- TODO Review budget [due:2026-10-30]
-- DONE Review the completed migration
-- CANCELED Book the offsite
-  - TODO Nested items count when they start with a keyword
+## IN PROGRESS [#A] Review system architecture :design:
+DEADLINE: <2026-11-05 Thu>
+:PROPERTIES:
+:ID: etna-review-001
+:END:
+- [x] Collect requirements
+- [ ] Draft the proposal
+  SCHEDULED: <2026-11-03 Tue>
 
-## Waiting On
-- @Raju Provide deployment estimate [due:2026-11-06]
-- [ ] @Asha Submit hiring feedback [due:2026-11-09] [promised:2026-11-07]
-- [ ] Follow up with vendor
-- DONE @Lee Send the signed contract
+## BLOCKED Load test the new cluster
 
-## NEXT Draft the Q1 plan
+# Krakatoa
+
+- [ ] Review release checklist
+  DEADLINE: <2026-10-30 Fri>
+  :PROPERTIES:
+  :STATE: REVIEW
+  :PRIORITY: B
+  :END:
+
+# Team
+
+Not a project: these use the default workflow.
+
+## TODO Plan the team retro
+- [ ] Reply about the offsite venue
+  DEADLINE: <2026-11-06 Fri>
+  :PROPERTIES:
+  :STATE: WAITING
+  :ASSIGNED: Elira Voss
+  :END:
+- [ ] Send interview scorecards
+  :PROPERTIES:
+  :STATE: WAITING
+  :ASSIGNED: Tavren Solis
+  :PROMISED: 2026-11-07
+  :END:
+
+## DONE Archive the old wiki
+## CANCELED Book the conference booth
 
 ## Decisions
 We agreed to revisit the release date next week.
 
-- Plain bullets outside Waiting On are notes, not tasks
-- todo and Todo are not keywords: matching is exact
-
-```markdown
-- TODO Examples inside code fences are ignored
-```
+- Plain bullets are notes, not tasks.
