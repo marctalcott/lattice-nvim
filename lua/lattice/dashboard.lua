@@ -288,6 +288,11 @@ local function help_lines(keymaps)
     "  :LatticeAddWaiting  Add a ## WAITING heading",
     "  :LatticeNextState   Move the heading under the cursor to its next state",
     "  :LatticePrevState   Move the heading under the cursor to its previous state",
+    "  :LatticeSetState    Choose the heading's state",
+    "  :LatticeToggleCheckbox  Toggle the checkbox under the cursor",
+    "  :LatticeSchedule / :LatticeDeadline  Set or remove a date",
+    "  :LatticePriorityUp / :LatticePriorityDown  Change [#A]",
+    "  :LatticeMigrate     Convert this note's v0.1 items to Org",
   }
   if keymaps then
     local mapped = {}
@@ -298,6 +303,12 @@ local function help_lines(keymaps)
       { "add_waiting", "add Waiting On" },
       { "next_state", "next state" },
       { "prev_state", "previous state" },
+      { "set_state", "choose state" },
+      { "toggle_checkbox", "toggle box" },
+      { "schedule", "schedule" },
+      { "deadline", "deadline" },
+      { "priority_up", "priority up" },
+      { "priority_down", "priority down" },
     }) do
       if keymaps[item[1]] then
         mapped[#mapped + 1] = ("%s %s"):format(keymaps[item[1]], item[2])

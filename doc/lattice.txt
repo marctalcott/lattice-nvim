@@ -42,10 +42,13 @@ Without a plugin manager: >lua
 setup({opts})
     {root}     (string, required) Notes root. Lattice never guesses it.
     {keymaps}  (table|false) Keys for `open`, `refresh`, `add_todo`,
-               `add_waiting`, `next_state`, `prev_state`. Each may be a
-               key string or false. Set `keymaps = false` to create none.
-               Defaults: `<leader>ll`, `<leader>lr`, `<leader>lt`,
-               `<leader>ld`, `<leader>ln`, `<leader>lp`.
+               `add_waiting`, `next_state`, `prev_state`, `set_state`,
+               `toggle_checkbox`, `schedule`, `deadline`, `priority_up`,
+               `priority_down`. Each may be a key string or false. Set
+               `keymaps = false` to create none. Defaults: `<leader>ll`,
+               `<leader>lr`, `<leader>lt`, `<leader>ld`, `<leader>ln`,
+               `<leader>lp`, `<leader>ls`, `<leader>lx`, `<leader>lS`,
+               `<leader>lD`, `<leader>l+`, `<leader>l-`.
 
 ==============================================================================
 3. NOTE FORMAT                                                 *lattice-format*
@@ -151,6 +154,31 @@ DONE, CANCELED, no keyword.
   and nothing changes.
 - One undo step. The buffer is not saved.
 
+                                                               *lattice-edit*
+Editing commands follow Org and change only the current buffer, as one
+undo step; nothing is saved. A stale or repeated command is refused.
+
+:LatticeSetState      Choose a state (C-c C-t).               <leader>ls
+:LatticeToggleCheckbox  Toggle a checkbox (C-c C-c).          <leader>lx
+:LatticeSchedule      Set/remove SCHEDULED (C-c C-s).         <leader>lS
+:LatticeDeadline      Set/remove DEADLINE (C-c C-d).          <leader>lD
+:LatticePriorityUp / :LatticePriorityDown  (S-Up/S-Down).  <leader>l+ / l-
+:LatticeMigrate       Convert this note's v0.1 items to Org headings.
+
+- Completing adds `CLOSED: [...]` when `logging.done` is "time" (off by
+  default). Reopening removes it.
+- Completing a repeating task advances its SCHEDULED/DEADLINE, keeps it
+  open in its previous state (or `repeat_to_state`), and with
+  `logging.repeat` "time" (default) records :LAST_REPEAT: and a state note.
+- `enforce.checkboxes` / `enforce.todo` block completion while steps or
+  subtasks are open (off by default).
+- Toggling a checkbox writes [x]; a parent's children follow it; parent
+  boxes become [x] or [-] from their children, and [n/m] / [n%] cookies
+  on parent items and the heading are recalculated.
+- Dates: YYYY-MM-DD, today, tomorrow, +3d/+2w/+1m/+1y, optional HH:MM;
+  empty removes. Repeaters and warnings are kept.
+- Priority: none starts at the default; past either end removes it.
+
 ==============================================================================
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
 
@@ -188,6 +216,8 @@ Optional `.lattice.json` in the notes root: >json
       "priorities": { "values": ["A", "B", "C"], "default": "B" },
       "inherit": { "tags": true, "properties": [] },
       "deadlines": { "warning_days": 14 },
+      "logging": { "done": false, "repeat": "time" },
+      "enforce": { "checkboxes": false, "todo": false },
       "scan": {
         "include": ["**/*.md"],
         "exclude": ["Archives/**", ".git/**"]
@@ -209,9 +239,8 @@ error and scans nothing.
 8. LIMITATIONS AND TROUBLESHOOTING                             *lattice-health*
 
 - No file watching. Refresh by hand.
-- Org subset in progress: completing tasks (advancing repeaters, CLOSED),
-  editing that keeps checkboxes and :STATE: in sync, and progress cookies
-  come in later milestones. |lattice-cycle| edits the state word only.
+- Org subset in progress: a fuller agenda, editing from the dashboard,
+  refile and archive come later.
 - A broken Tree-sitter parser binary can crash Neovim; delete it and run
   :TSUpdate.
 - WBR, AI discovery, Portico publishing and Drafts import are not built.

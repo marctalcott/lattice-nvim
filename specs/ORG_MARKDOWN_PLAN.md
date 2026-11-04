@@ -106,6 +106,17 @@ Asked whether Org counts `- [ ]` as a TODO (it does not), the PO chose to follow
 
 Found while testing in LazyVim: saving a note runs a Markdown formatter that inserts a blank line after every heading (markdownlint MD022, Prettier), which would cut a drawer or planning line off from its heading under Org's rule that they follow the headline directly. Lattice therefore skips blank lines between a heading, its planning lines and its drawer, but only when the next non-blank line is metadata; prose still ends the metadata. Lattice itself writes metadata directly under the heading.
 
+### D16. Mutation layer and editing behaviour (milestone D, 2026-11-03)
+
+- **One path for edits.** Operations in `lattice.mutate` are pure (lines in, lines out). `apply()` refuses unless the buffer still equals the lines the edit was computed from (§14.2 source validation), then writes only the hunks `vim.diff` finds, bottom-up, as one undo step. This is also how a repeated completion is kept from double-advancing a repeater (§10.3). Edits go to the buffer; Lattice never writes files.
+- **Org defaults for logging:** `logging.done` false (`org-log-done` nil), `logging.repeat` "time" (`org-log-repeat`): `:LAST_REPEAT:` plus a state note in Org's format, placed after the planning lines and drawer, newest first. Notes go in the entry, not a `:LOGBOOK:` drawer (`org-log-into-drawer` nil). Only "time" is supported, not "note".
+- **Repeats:** a completed repeating heading (with or without a state) returns to its previous state when that was active, else the workflow's first active state, unless `repeat_to_state` says otherwise; no `CLOSED` is added.
+- **Checkboxes:** Lattice writes lowercase `[x]` (Markdown's usual form; Org writes `[X]`, and both read the same). Toggling a parent sets its descendants to match, then parents are derived from children (`[x]`, `[-]`, `[ ]`). Cookies are recalculated only on ancestors of the change, so stale cookies elsewhere are left as written. Percentages round down.
+- **Planning edits:** entries share the first planning line, in Org's order (CLOSED, DEADLINE, SCHEDULED); rescheduling keeps an existing repeater and warning.
+- **Priority:** `org-priority-start-cycle-with-default` behaviour: none → default; past either end → removed.
+- **Migration (D3):** each v0.1 item becomes a heading one level below its enclosing heading (nested items deeper), its sub-items dedented beneath it, with blank lines around it.
+- **Deferred to milestone E:** `refile_task` and `archive_task` (§14.2), which move text between notes, and editing from the dashboard.
+
 ## Compatibility classification (§2.2)
 
 | Feature | Category |
@@ -121,6 +132,6 @@ Found while testing in LazyVim: saving a note runs a Markdown formatter that ins
 | Trailing `:tag:` on headings, inheritance | Direct |
 | Property drawers | Direct (headings only); blank lines before them allowed (Adapted, D15) |
 | Progress cookies | Direct |
-| Parent checkbox follows children (`[-]`, `[X]`) | Direct (milestone D) |
+| Parent checkbox follows children (`[-]`, `[x]`) | Direct |
 | Checkbox progress counted for headings | Direct |
 | Org Babel, tables, links, export, clocking | Unsupported |

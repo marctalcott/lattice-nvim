@@ -3,6 +3,7 @@ local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
 local keywords = require("lattice.keywords")
 local markdown = require("lattice.markdown")
+local mutate = require("lattice.mutate")
 local tasks = require("lattice.tasks")
 
 local M = {}
@@ -220,6 +221,7 @@ function M.cycle(buf, row, cfg, direction)
   if not new_line then
     return nil, start
   end
+  local original = vim.list_extend({}, lines)
   if state then
     lines[row] = new_line
     local listed = false
@@ -229,6 +231,22 @@ function M.cycle(buf, row, cfg, direction)
     if not listed then
       return nil, "Lattice wouldn't list this line as an item: it is inside a code block or indented as code"
     end
+  end
+  if line:match("^ ? ? ?#") then
+    -- Headings go through the mutation layer: CLOSED, repeaters, logging
+    -- and parent cookies, as Org's S-Right does.
+    local new_lines, message = mutate.set_state(original, cfg, row, state or "")
+    if not new_lines then
+      return nil, message
+    end
+    local ok, apply_err = mutate.apply(buf, original, new_lines)
+    if not ok then
+      return nil, apply_err
+    end
+    if message then
+      vim.notify("Lattice: " .. message, vim.log.levels.INFO)
+    end
+    return state or "", nil, message
   end
   vim.api.nvim_buf_set_text(buf, row - 1, start, row - 1, stop, { inserted })
   return state or ""
@@ -323,6 +341,231 @@ function M.add_waiting()
       local drawer = person ~= "" and { ":PROPERTIES:", ":ASSIGNED: " .. person, ":END:" } or nil
       finish(buf, "WAITING", text, cursor, drawer)
     end)
+  end)
+end
+
+-- Edit commands (milestone D) -------------------------------------------------
+
+-- Runs a pure mutation on the current note: `op(lines, cfg, row)` returns
+-- new lines and an optional message, or nil and an error.
+local function edit(purpose, op)
+  local buf = current_markdown_buffer(purpose)
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local ok, new_lines, message = pcall(op, lines, cfg, row)
+  if not ok then
+    warn(tostring(new_lines))
+    return
+  end
+  if not new_lines then
+    warn(message)
+    return
+  end
+  local applied, err = mutate.apply(buf, lines, new_lines)
+  if not applied then
+    warn(err)
+  elseif message then
+    vim.notify("Lattice: " .. message, vim.log.levels.INFO)
+  end
+end
+
+--- Org's C-c C-t with selection: pick any state of the heading's workflow.
+function M.set_state()
+  local buf = current_markdown_buffer("change a task's state")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local parsed = parse(lines, cfg)
+  local kws = parsed.keywords_at[row]
+  if not kws or not lines[row]:match("^ ? ? ?#") then
+    warn("put the cursor on a heading")
+    return
+  end
+  local choices = {}
+  for _, cycle in ipairs(kws.cycles) do
+    vim.list_extend(choices, cycle)
+  end
+  choices[#choices + 1] = "(no state)"
+  vim.ui.select(choices, { prompt = "State: " }, function(choice)
+    if not choice then
+      return
+    end
+    if not usable(buf) then
+      return
+    end
+    local new_lines, message = mutate.set_state(lines, cfg, row, choice == "(no state)" and "" or choice)
+    if not new_lines then
+      warn(message)
+      return
+    end
+    local applied, err = mutate.apply(buf, lines, new_lines)
+    if not applied then
+      warn(err)
+    elseif message then
+      vim.notify("Lattice: " .. message, vim.log.levels.INFO)
+    end
+  end)
+end
+
+function M.toggle_checkbox()
+  edit("toggle a checkbox", function(lines, cfg, row)
+    return mutate.toggle_checkbox(lines, row, cfg)
+  end)
+end
+
+function M.priority_up()
+  edit("change a priority", function(lines, cfg, row)
+    return mutate.shift_priority(lines, cfg, row, 1)
+  end)
+end
+
+function M.priority_down()
+  edit("change a priority", function(lines, cfg, row)
+    return mutate.shift_priority(lines, cfg, row, -1)
+  end)
+end
+
+--- Reads a date answer: YYYY-MM-DD, today, tomorrow, or +N with d/w/m/y,
+--- optionally followed by HH:MM. Returns { date, time } or nil.
+function M.read_date(answer, today)
+  local text, time = vim.trim(answer):match("^(.-)%s*(%d%d?:%d%d)$")
+  if not text then
+    text = vim.trim(answer)
+  end
+  local schedule = require("lattice.schedule")
+  local timestamp = require("lattice.timestamp")
+  local date
+  if text == "today" or text == "" and time then
+    date = today
+  elseif text == "tomorrow" then
+    date = schedule.add_days(today, 1)
+  elseif text:match("^%+%d+[dwmy]$") then
+    local n, unit = text:match("^%+(%d+)([dwmy])$")
+    date = schedule.shift(assert(timestamp.parse("<" .. today .. ">")), tonumber(n), unit).date
+  elseif timestamp.valid_date(text) then
+    date = text
+  end
+  if not date then
+    return nil
+  end
+  if time then
+    local h, m = time:match("^(%d+):(%d+)$")
+    if tonumber(h) > 23 or tonumber(m) > 59 then
+      return nil
+    end
+    time = ("%02d:%s"):format(tonumber(h), m)
+  end
+  return { date = date, time = time }
+end
+
+-- Org's C-c C-s / C-c C-d: set or remove SCHEDULED / DEADLINE. An
+-- existing repeater and warning are kept, as Org keeps them.
+local function plan_command(keyword)
+  local buf = current_markdown_buffer("schedule a task")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if not lines[row]:match("^ ? ? ?#") then
+    warn("put the cursor on a heading")
+    return
+  end
+  local existing
+  for _, task in ipairs(parse(lines, cfg).tasks) do
+    if task.line == row then
+      existing = task[keyword:lower()]
+    end
+  end
+  local label = keyword == "SCHEDULED" and "Schedule" or "Deadline"
+  ask(label .. " (YYYY-MM-DD, today, +3d, optional HH:MM; empty removes): ", function(answer)
+    if not usable(buf) then
+      return
+    end
+    local raw
+    if answer ~= "" then
+      local when = M.read_date(answer, os.date("%Y-%m-%d"))
+      if not when then
+        warn(("%q is not a date Lattice understands; nothing changed"):format(answer))
+        return
+      end
+      local timestamp = require("lattice.timestamp")
+      local ts = assert(timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">"))
+      if existing then
+        ts.repeater, ts.warning = existing.repeater, existing.warning
+      end
+      raw = require("lattice.schedule").format(ts)
+    end
+    local new_lines, err = mutate.set_planning(lines, row, keyword, raw)
+    if not new_lines then
+      warn(err)
+      return
+    end
+    local applied, apply_err = mutate.apply(buf, lines, new_lines)
+    if not applied then
+      warn(apply_err)
+    end
+  end)
+end
+
+function M.schedule()
+  plan_command("SCHEDULED")
+end
+
+function M.deadline()
+  plan_command("DEADLINE")
+end
+
+--- Converts the current note's Lattice v0.1 forms to Org headings, after
+--- asking. One undo step; the note is not saved.
+function M.migrate()
+  local buf = current_markdown_buffer("migrate")
+  if not buf then
+    return
+  end
+  local cfg = load_config()
+  if not cfg then
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local new_lines, count = mutate.migrate(lines, cfg)
+  if not new_lines then
+    warn(count)
+    return
+  end
+  if count == 0 then
+    vim.notify("Lattice: this note has no Lattice v0.1 items to convert", vim.log.levels.INFO)
+    return
+  end
+  vim.ui.select({ "Yes", "No" }, {
+    prompt = ("Convert %d Lattice v0.1 item(s) in this note to Org headings?"):format(count),
+  }, function(choice)
+    if choice ~= "Yes" or not usable(buf) then
+      return
+    end
+    local applied, err = mutate.apply(buf, lines, new_lines)
+    if not applied then
+      warn(err)
+    else
+      vim.notify(("Lattice: converted %d item(s); review, then save"):format(count), vim.log.levels.INFO)
+    end
   end)
 end
 

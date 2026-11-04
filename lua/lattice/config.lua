@@ -12,6 +12,12 @@ local DEFAULT_KEYMAPS = {
   refresh = "<leader>lr",
   next_state = "<leader>ln",
   prev_state = "<leader>lp",
+  set_state = "<leader>ls",
+  toggle_checkbox = "<leader>lx",
+  schedule = "<leader>lS",
+  deadline = "<leader>lD",
+  priority_up = "<leader>l+",
+  priority_down = "<leader>l-",
 }
 
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
@@ -37,6 +43,13 @@ function M.defaults()
     priorities = { values = { "A", "B", "C" }, default = "B" },
     inherit = { tags = true, properties = {} },
     deadlines = { warning_days = 14 },
+    -- Org's org-log-done (nil) and org-log-repeat ('time) defaults.
+    logging = { done = false, ["repeat"] = "time" },
+    -- Org's org-enforce-todo-checkbox-dependencies / -todo-dependencies.
+    enforce = { checkboxes = false, todo = false },
+    -- Org's org-todo-repeat-to-state: nil returns a repeating task to the
+    -- state it had before completion.
+    repeat_to_state = nil,
     -- v0.1 legacy: bullets under this heading are read as WAITING.
     headings = { waiting = "Waiting On" },
     inbox = { path = "Inbox" },
@@ -122,7 +135,7 @@ local function validate(raw)
   if raw.version ~= nil and raw.version ~= 1 then
     return nil, ("unsupported version %s (expected 1)"):format(vim.inspect(raw.version))
   end
-  for _, key in ipairs({ "scan", "headings", "inbox", "workflows", "priorities", "inherit", "deadlines" }) do
+  for _, key in ipairs({ "scan", "headings", "inbox", "workflows", "priorities", "inherit", "deadlines", "logging", "enforce" }) do
     if raw[key] ~= nil and type(raw[key]) ~= "table" then
       return nil, key .. " must be a JSON object"
     end
@@ -220,6 +233,37 @@ local function validate(raw)
         return nil, "inherit.properties must be true or a list of property names"
       end
     end
+  end
+
+  if raw.logging ~= nil then
+    for _, key in ipairs({ "done", "repeat" }) do
+      local value = raw.logging[key]
+      if value ~= nil then
+        if value ~= false and value ~= "time" then
+          return nil, ('logging.%s must be "time" or false'):format(key)
+        end
+        cfg.logging[key] = value
+      end
+    end
+  end
+
+  if raw.enforce ~= nil then
+    for _, key in ipairs({ "checkboxes", "todo" }) do
+      local value = raw.enforce[key]
+      if value ~= nil then
+        if type(value) ~= "boolean" then
+          return nil, ("enforce.%s must be true or false"):format(key)
+        end
+        cfg.enforce[key] = value
+      end
+    end
+  end
+
+  if raw.repeat_to_state ~= nil then
+    if type(raw.repeat_to_state) ~= "string" or vim.trim(raw.repeat_to_state) == "" then
+      return nil, "repeat_to_state must be a state name"
+    end
+    cfg.repeat_to_state = vim.trim(raw.repeat_to_state)
   end
 
   if raw.deadlines ~= nil and raw.deadlines.warning_days ~= nil then
