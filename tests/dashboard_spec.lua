@@ -72,24 +72,51 @@ test("overdue lists past-due tasks oldest first, from both owner groups", functi
   assert(overdue:find("^  !  Asha — Oldest%s+Oct 01\n  !  Recent%s+Nov 01$"), overdue)
 end)
 
-test("due soon covers today through 7 days ahead, soonest first, excluding overdue", function()
+test("due soon: deadlines inside the warning period, default 14 days, soonest first", function()
+  local ts = H.timestamp
   local text = render({
-    task({ text = "Day eight", due = "2026-11-10" }),
-    task({ text = "Day seven", due = "2026-11-09" }),
+    task({ text = "Day fifteen", due = "2026-11-17" }),
+    task({ text = "Day fourteen", due = "2026-11-16" }),
     task({ text = "Today", due = "2026-11-02" }),
     task({ text = "Yesterday", due = "2026-11-01" }),
+    -- A deadline's own -3d replaces the default (spec §9.2).
+    task({ text = "Own warning near", due = "2026-11-05", deadline = assert(ts.parse("<2026-11-05 Thu -3d>")) }),
+    task({ text = "Own warning far", due = "2026-11-06", deadline = assert(ts.parse("<2026-11-06 Fri -3d>")) }),
   })
-  assert(text:find("DUE SOON (2)  [within next 7 days; excludes overdue]", 1, true))
+  assert(text:find("DUE SOON (2)  [deadlines within their warning period, default 14 days]", 1, true), text)
   local soon = section(text, "DUE SOON")
-  assert(soon:find("Today.-Day seven"))
-  assert(not soon:find("Day eight", 1, true))
-  assert(not soon:find("Yesterday", 1, true))
+  assert(soon:find("Own warning near.-Day fourteen"), soon)
+  for _, absent in ipairs({ "Day fifteen", "Today", "Yesterday", "Own warning far" }) do
+    assert(not soon:find(absent, 1, true), absent)
+  end
+  -- The default comes from .lattice.json deadlines.warning_days.
+  local narrow = render({ task({ text = "Day fourteen", due = "2026-11-16" }) }, nil, { deadlines = { warning_days = 7 } })
+  assert(narrow:find("DUE SOON (0)  [deadlines within their warning period, default 7 days]", 1, true), narrow)
+end)
+
+test("today: scheduled today or earlier and still open, and deadlines today", function()
+  local ts = H.timestamp
+  local text = render({
+    task({ text = "Scheduled long ago", scheduled = assert(ts.parse("<2026-10-20 Tue>")) }),
+    task({ text = "Scheduled today", scheduled = assert(ts.parse("<2026-11-02 Mon>")) }),
+    task({ text = "Scheduled tomorrow", scheduled = assert(ts.parse("<2026-11-03 Tue>")) }),
+    task({ text = "Delayed", scheduled = assert(ts.parse("<2026-11-01 Sun -3d>")) }),
+    task({ text = "Deadline today", due = "2026-11-02" }),
+    task({ text = "Done", done = true, scheduled = assert(ts.parse("<2026-11-01 Sun>")) }),
+  })
+  local today = section(text, "TODAY")
+  assert(today:find("Scheduled long ago.-Scheduled today.-Deadline today"), today)
+  for _, absent in ipairs({ "Scheduled tomorrow", "Delayed", "Done" }) do
+    assert(not today:find(absent, 1, true), absent)
+  end
+  assert(today:find("sched Oct 20", 1, true), today)
 end)
 
 test("due soon crosses month and year ends", function()
   eq(dashboard.add_days("2026-12-28", 7), "2027-01-04")
   eq(dashboard.add_days("2028-02-25", 7), "2028-03-03")
   local text = render({ task({ text = "New year", due = "2027-01-04" }) }, "2026-12-28")
+  assert(not section(text, "TODAY"):find("New year", 1, true))
   assert(section(text, "DUE SOON"):find("New year", 1, true))
 end)
 

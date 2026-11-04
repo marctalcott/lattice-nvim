@@ -91,6 +91,9 @@ Metadata goes directly below the title (inside the list item for a
 checkbox):
 - `SCHEDULED: <2026-11-05 Thu>`, `DEADLINE: <2026-11-09 Mon -3d>`,
   `CLOSED: [2026-11-09 Mon 14:30]`, with repeaters `+1w`, `++1m`, `.+1d`.
+  Repeaters follow Org: `+` one interval from the date, `++` until the
+  date is in the future, `.+` from the completion date. Months overflow
+  like Org (Jan 31 +1m is Mar 3).
 - Priority: `## TODO [#A] Title`, or `:PRIORITY: A` on a checkbox.
 - Tags: `## TODO Title :a:b:`, or `:TAGS: a b` on a checkbox. Tags inherit
   from enclosing headings (`inherit.tags`).
@@ -107,8 +110,10 @@ dates are listed under WARNINGS. |:LatticeHealth| counts v0.1 forms.
 =====
 4. DASHBOARD                                                *lattice-dashboard*
 
-Groups: MY TO DO, WAITING ON, OVERDUE (due before today, oldest first),
-DUE SOON (today through 7 days ahead, soonest first), and DONE (finished
+Groups: MY TO DO, WAITING ON, OVERDUE (deadline before today, oldest
+first), TODAY (scheduled today or earlier and still open, deadlines today),
+DUE SOON (deadline inside its warning period: its own -Nd, else
+`deadlines.warning_days`, default 14), and DONE (finished
 tasks, the 20 most recent). Rows show state, priority, assignee and tags. INBOX appears when the
 inbox folder exists. Owner groups list dated tasks first, by date, then
 undated tasks by file and line.
@@ -213,8 +218,8 @@ error and scans nothing.
 8. LIMITATIONS AND TROUBLESHOOTING                             *lattice-health*
 
 - No file watching. Refresh by hand.
-- Org subset in progress: scheduling and repeaters in the agenda, editing
-  that keeps checkboxes and :STATE: in sync, progress cookies and CLOSED
+- Org subset in progress: completing tasks (advancing repeaters, CLOSED),
+  editing that keeps checkboxes and :STATE: in sync, and progress cookies
   come in later milestones. |lattice-cycle| edits the state word only.
 - A broken Tree-sitter parser binary can crash Neovim; delete it and run
   :TSUpdate.

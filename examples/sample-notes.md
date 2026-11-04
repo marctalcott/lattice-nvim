@@ -16,7 +16,7 @@ DEADLINE: <2026-11-05 Thu>
 :END:
 - [x] Collect requirements
 - [ ] Draft the proposal
-  SCHEDULED: <2026-11-03 Tue>
+  SCHEDULED: <2026-10-30 Fri>
 
 ## BLOCKED Load test the new cluster
 
@@ -33,7 +33,8 @@ DEADLINE: <2026-11-05 Thu>
 
 Not a project: these use the default workflow.
 
-## TODO Plan the team retro
+## TODO Review team metrics
+SCHEDULED: <2026-11-02 Mon +1w>
 - [ ] Reply about the offsite venue
   DEADLINE: <2026-11-06 Fri>
   :PROPERTIES:

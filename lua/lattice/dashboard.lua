@@ -7,7 +7,8 @@ local M = {}
 local BUFFER_NAME = "lattice://dashboard"
 local MIN_WIDTH = 50
 local MAX_TEXT_COLUMN = 60
-local DUE_SOON_DAYS = 7
+-- Org's org-deadline-warning-days, when .lattice.json sets none.
+local DEFAULT_WARNING_DAYS = 14
 local DONE_LIMIT = 20 -- most recent done items shown
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
 local FOOTER = "Enter  Open note    r  Refresh    q  Close    ?  Help"
@@ -33,6 +34,8 @@ end
 local function pad(text, column)
   return text .. (" "):rep(math.max(0, column - width(text)))
 end
+
+local schedule = require("lattice.schedule")
 
 local function to_time(iso)
   local y, m, d = iso:match("^(%d+)-(%d+)-(%d+)$")
@@ -110,18 +113,49 @@ function M.done(tasks)
   return done
 end
 
---- Open tasks due before today, oldest first.
+--- Open tasks with a deadline (or v0.1 [due:]) before today, oldest first.
 function M.overdue(tasks, today)
   return sort_open(tasks, function(task)
-    return task.due ~= nil and task.due < today
+    return task.due ~= nil and schedule.deadline_status(task.due, today, 0) == "overdue"
   end)
 end
 
---- Open tasks due from today through the next 7 days, soonest first.
-function M.due_soon(tasks, today)
-  local last = M.add_days(today, DUE_SOON_DAYS)
+--- Org's daily agenda for today (§8.2, §9.3): open tasks scheduled today,
+--- or earlier and still open, and deadlines due today. Scheduled first, by
+--- date, then deadlines.
+function M.today(tasks, today)
+  local list = vim.tbl_filter(function(task)
+    if task.done then
+      return false
+    end
+    if task.scheduled then
+      local status = schedule.scheduled_status(task.scheduled, today)
+      if status == "today" or status == "past" then
+        return true
+      end
+    end
+    return task.due ~= nil and task.due == today
+  end, tasks)
+  table.sort(list, function(a, b)
+    local sa, sb = a.scheduled and a.scheduled.date or "9999", b.scheduled and b.scheduled.date or "9999"
+    if sa ~= sb then
+      return sa < sb
+    end
+    return by_due_then_source(a, b)
+  end)
+  return list
+end
+
+--- Open tasks whose deadline is after today but inside its warning period:
+--- the deadline's own `-Nd`, else `warning_days` (§9.2). Soonest first.
+function M.due_soon(tasks, today, warning_days)
+  warning_days = warning_days or DEFAULT_WARNING_DAYS
   return sort_open(tasks, function(task)
-    return task.due ~= nil and task.due >= today and task.due <= last
+    if task.due == nil then
+      return false
+    end
+    local warning = task.deadline and schedule.warning_days(task.deadline, warning_days) or warning_days
+    return schedule.deadline_status(task.due, today, warning) == "upcoming"
   end)
 end
 
@@ -196,13 +230,18 @@ function build_rows(tasks, today, mark, mark_hl, text_col, no_dates)
       parts[#parts + 1] = { col = #prefix + span.col, len = span.len, hl = span.hl }
     end
     local line = prefix .. row.label
-    if task.due or task.promised then
+    if task.due or task.promised or task.scheduled then
       -- "  [ ] " is the widest prefix; dates line up after it in every group.
       line = pad(line, 6 + text_col) .. "    "
     end
     if task.due then
       local label = date_label(task.due, today)
       parts[#parts + 1] = { col = #line, len = #label, hl = task.due < today and "DiagnosticError" or "Comment" }
+      line = line .. label .. ((task.promised or task.scheduled) and "  " or "")
+    end
+    if task.scheduled then
+      local label = "sched " .. date_label(task.scheduled.date, today)
+      parts[#parts + 1] = { col = #line, len = #label, hl = "Comment" }
       line = line .. label .. (task.promised and "  " or "")
     end
     if task.promised then
@@ -294,14 +333,20 @@ function M.render(result, today, opts)
     local todo, waiting = M.sorted(result.tasks, "todo"), M.sorted(result.tasks, "waiting")
     open_count = #todo + #waiting
     local col = label_column(vim.list_extend(vim.list_extend({}, todo), waiting))
+    local warning_days = (result.deadlines or {}).warning_days or DEFAULT_WARNING_DAYS
     groups = {
       { title = "MY TO DO", rows = build_rows(todo, today, "[ ]", "Comment", col) },
       { title = "WAITING ON", rows = build_rows(waiting, today, "[ ]", "Comment", col) },
       { title = "OVERDUE", rows = build_rows(M.overdue(result.tasks, today), today, "! ", "DiagnosticError", col) },
       {
+        title = "TODAY",
+        note = "[scheduled today or earlier and still open; deadlines today]",
+        rows = build_rows(M.today(result.tasks, today), today, "» ", "DiagnosticInfo", col),
+      },
+      {
         title = "DUE SOON",
-        note = "[within next 7 days; excludes overdue]",
-        rows = build_rows(M.due_soon(result.tasks, today), today, "· ", "DiagnosticWarn", col),
+        note = ("[deadlines within their warning period, default %d days]"):format(warning_days),
+        rows = build_rows(M.due_soon(result.tasks, today, warning_days), today, "· ", "DiagnosticWarn", col),
       },
       M.done_group(result.tasks, today, col),
     }

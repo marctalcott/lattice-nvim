@@ -83,6 +83,21 @@ States may contain spaces (`IN PROGRESS`), matched exactly and longest first. Or
 
 The v0.1 dashboard groups stay until the agenda (milestone E). WAITING ON shows tasks in the `WAITING` state plus v0.1 `Waiting On` items; the date column is the `DEADLINE` (or v0.1 `[due:]`). Rows show state, priority, assignee and local tags.
 
+### D12. Calendar arithmetic and repeaters follow Org's implementation — spec §10, §18.6
+
+Org shifts timestamps with Emacs `encode-time`, and `lattice.schedule` matches it:
+
+- Month and year steps keep the day number and overflow: Jan 31 `+1m` → Mar 3 (Mar 2 in a leap year), Feb 29 `+1y` → Mar 1. Clamping to the month end would be friendlier, but it is not what Org does.
+- `+` adds one interval to the current occurrence, even when the result is still in the past (catch-up). `++` adds whole intervals, always at least one, until the occurrence is after the completion moment; a date without a time stands for its midnight. `++` steps are taken from the original date, so month-end days don't drift. `.+` adds one interval to the completion date, keeping the time of day; for `h` it adds to the completion time.
+- Warning and delay periods convert to days as Org's `org-get-wdays` does (`w` = 7, `m` = 30.4, `y` = 365.25, rounded down).
+- When both SCHEDULED and DEADLINE repeat, each advances by its own repeater from the same completion moment; a timestamp without a repeater is unchanged (§18.6).
+- Weekday names are rewritten in English after a shift.
+- Repeated completion commands must not double-advance (§10.3): the mutation layer (milestone D) re-checks the source text before applying a change.
+
+### D13. Dashboard dates during milestones C–D
+
+OVERDUE uses deadlines before today. TODAY follows Org's daily agenda: scheduled today, or scheduled earlier and still open, after any `-Nd` delay, plus deadlines today. DUE SOON uses each deadline's warning period, else `deadlines.warning_days` (14, Org's default; the v0.1 window was a fixed 7 days). A v0.1 `[due:]` date counts as a deadline.
+
 ## Compatibility classification (§2.2)
 
 | Feature | Category |
