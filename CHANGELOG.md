@@ -51,6 +51,14 @@ Spec Amendment 1 and plan decision D14: as in Org-mode, a Markdown checkbox is n
 - Lattice v0.1 list forms (`- TODO x`, `Waiting On` bullets) are still read with v0.1 rules, and counted as legacy in `:LatticeHealth`.
 - `examples/sample-notes.md` uses headings for every task.
 
+### Milestone D — Mutation engine
+
+- `lattice.mutate`: pure edit operations and `apply()`, which writes only changed lines as one undo step after checking the buffer still matches (stale or repeated commands are refused).
+- State changes follow Org: `CLOSED` when `logging.done` is `"time"`, removed on reopen; repeating tasks advance, stay open (previous state or `repeat_to_state`), and record `:LAST_REPEAT:` and a state note (`logging.repeat`); optional `enforce.checkboxes` / `enforce.todo`; parent subtask cookies update. `<leader>ln` / `<leader>lp` now do all of this for headings.
+- New commands and keys: `:LatticeSetState` (`<leader>ls`), `:LatticeToggleCheckbox` (`<leader>lx`, with Org's parent `[-]`/`[x]` and cookie updates), `:LatticeSchedule` (`<leader>lS`), `:LatticeDeadline` (`<leader>lD`), `:LatticePriorityUp` / `Down` (`<leader>l+` / `<leader>l-`), and `:LatticeMigrate` to convert a note's v0.1 items to Org headings.
+- New `.lattice.json` keys: `logging`, `enforce`, `repeat_to_state`.
+- Acceptance tests PAR-022 to PAR-024, PAR-026 and PAR-027.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.

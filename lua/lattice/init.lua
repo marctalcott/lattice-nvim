@@ -12,6 +12,13 @@ M.add_todo = insert.add_todo
 M.add_waiting = insert.add_waiting
 M.next_state = insert.next_state
 M.prev_state = insert.prev_state
+M.set_state = insert.set_state
+M.toggle_checkbox = insert.toggle_checkbox
+M.schedule = insert.schedule
+M.deadline = insert.deadline
+M.priority_up = insert.priority_up
+M.priority_down = insert.priority_down
+M.migrate = insert.migrate
 
 function M.health()
   vim.cmd("checkhealth lattice")
@@ -61,6 +68,12 @@ local function set_keymaps(keymaps)
     { "refresh", M.refresh, "Lattice: refresh" },
     { "next_state", M.next_state, "Lattice: next TODO state" },
     { "prev_state", M.prev_state, "Lattice: previous TODO state" },
+    { "set_state", M.set_state, "Lattice: choose TODO state" },
+    { "toggle_checkbox", M.toggle_checkbox, "Lattice: toggle checkbox" },
+    { "schedule", M.schedule, "Lattice: schedule" },
+    { "deadline", M.deadline, "Lattice: deadline" },
+    { "priority_up", M.priority_up, "Lattice: raise priority" },
+    { "priority_down", M.priority_down, "Lattice: lower priority" },
   }
   local skipped = {}
   for _, action in ipairs(actions) do
@@ -101,6 +114,13 @@ function M.setup(opts)
   command("LatticeAddWaiting", M.add_waiting, "Add a WAITING heading, with an optional :ASSIGNED: person")
   command("LatticeNextState", M.next_state, "Move the heading under the cursor to its next TODO state")
   command("LatticePrevState", M.prev_state, "Move the heading under the cursor to its previous TODO state")
+  command("LatticeSetState", M.set_state, "Choose the state of the heading under the cursor")
+  command("LatticeToggleCheckbox", M.toggle_checkbox, "Toggle the checkbox under the cursor")
+  command("LatticeSchedule", M.schedule, "Set or remove SCHEDULED on the heading under the cursor")
+  command("LatticeDeadline", M.deadline, "Set or remove DEADLINE on the heading under the cursor")
+  command("LatticePriorityUp", M.priority_up, "Raise the priority of the heading under the cursor")
+  command("LatticePriorityDown", M.priority_down, "Lower the priority of the heading under the cursor")
+  command("LatticeMigrate", M.migrate, "Convert this note's Lattice v0.1 items to Org headings")
   set_keymaps(options.keymaps)
 end
 

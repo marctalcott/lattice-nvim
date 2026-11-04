@@ -74,7 +74,7 @@ As in Org-mode, **tasks are headings** that start with a state. Checkboxes are s
 | `- TODO Title` (a bullet with a state) | A Lattice v0.1 item, still read; see [below](#lattice-v01-syntax) | Legacy |
 
 - A heading's subtree runs to the next heading of the same or a higher level, and child headings are subtasks.
-- **Progress**, as Org counts it: the top-level checkboxes of the lists directly under a heading, or, if it has none, its direct child TODO headings. A `[1/3]` or `[33%]` cookie in the title shows it; keeping the cookie updated comes with the editing commands.
+- **Progress**, as Org counts it: the top-level checkboxes of the lists directly under a heading, or, if it has none, its direct child TODO headings. A `[1/3]` or `[33%]` cookie in the title shows it; the editing commands keep it updated (see [Editing tasks](#editing-tasks)).
 - States match exactly, as in Org: `TODO` is a state; `todo`, `TODO:` and `TODOs` are not. A state with no title after it is not a task.
 - Prose, and anything in a fenced or indented code block, is never a task. Front matter is never a task.
 - Tasks are found with Neovim's built-in Tree-sitter Markdown parser. Windows line endings and a UTF-8 BOM are handled.
@@ -108,7 +108,7 @@ As in Org, metadata belongs to headings and goes directly below them. Blank line
 - Tags inherit from enclosing headings and tasks (`inherit.tags`). `:PROJECT:` and `:WORKFLOW:` always inherit; other properties inherit when listed in `inherit.properties`.
 - `:ASSIGNED:` names the person shown on a row. A task in the `WAITING` state is in WAITING ON, as in Org.
 - The dashboard's date column shows the `DEADLINE` and, after it, `sched` and the `SCHEDULED` date. See [Dashboard](#dashboard) for how they place a task in OVERDUE, TODAY and DUE SOON.
-- Repeaters follow Org exactly: `+1w` moves one interval from the current date (and can stay in the past if you're late), `++1w` moves whole intervals until the date is in the future, `.+1w` moves one interval from the day you complete it. Units are `h`, `d`, `w`, `m`, `y`. Month and year steps keep the day number and overflow like Org does, so Jan 31 `+1m` is Mar 3 (Mar 2 in a leap year). Lattice computes the next occurrence now; completing a task to apply it comes with the editing commands.
+- Repeaters follow Org exactly: `+1w` moves one interval from the current date (and can stay in the past if you're late), `++1w` moves whole intervals until the date is in the future, `.+1w` moves one interval from the day you complete it. Units are `h`, `d`, `w`, `m`, `y`. Month and year steps keep the day number and overflow like Org does, so Jan 31 `+1m` is Mar 3 (Mar 2 in a leap year). Completing a repeating task applies this; see [Editing tasks](#editing-tasks).
 - Problems are warnings, never silent fixes: invalid timestamps, a weekday that doesn't match its date, malformed drawers, unknown priorities, states or workflows, and duplicate `:ID:`s (within a note or across notes).
 
 ### Lattice v0.1 syntax
@@ -124,7 +124,7 @@ Notes written for Lattice 0.1 keep working, and `:LatticeHealth` counts what sti
 | `[promised:YYYY-MM-DD]` | `:PROMISED:` |
 | Front matter `todo: TODO NEXT \| DONE` | That note's workflow |
 
-These items take no Org metadata (planning lines, drawers, tags). Lattice never writes them: its commands add headings. A command to convert a note to the Org forms is planned.
+These items take no Org metadata (planning lines, drawers, tags). Lattice never writes them: its commands add headings. `:LatticeMigrate` converts a note to the Org forms; see [Editing tasks](#editing-tasks).
 
 ## Dashboard
 
@@ -183,7 +183,37 @@ Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<l
 - It uses the workflow in effect on that line: a `:WORKFLOW:` property, the project's workflow, the note's front matter `todo:`, or the default. A heading stays within the sequence that holds its state, so `BUG` steps to `FIXED` and then back to no state. A heading with no state starts on the first sequence.
 - List items aren't tasks in Org, so it won't give one a state. A Lattice v0.1 keyword bullet (`- TODO x`) can still change or drop its state.
 - On a plain line, the front matter, or a line inside a code block, it changes nothing and says why.
-- It edits only the buffer, as one undo step. It doesn't yet add `CLOSED` or advance repeaters; that comes with the editing commands.
+- It edits only the buffer, as one undo step, and completes or reopens tasks exactly as [Editing tasks](#editing-tasks) describes (`CLOSED`, repeaters, cookies).
+
+## Editing tasks
+
+These follow Org-mode's commands and edit only the current buffer, as one undo step (`u` undoes all of it). The note is never saved for you. Before writing, Lattice checks that the buffer still holds the text the edit was computed from, so a stale or repeated command changes nothing, and only the lines that actually change are written.
+
+| Key | Command | Org equivalent | What it does |
+|-----|---------|----------------|--------------|
+| `<leader>ls` | `:LatticeSetState` | `C-c C-t` | Pick any state of the heading's workflow, or none |
+| `<leader>ln` / `<leader>lp` | `:LatticeNextState` / `:LatticePrevState` | `S-Right` / `S-Left` | Step to the next or previous state (see [above](#changing-an-items-state)) |
+| `<leader>lx` | `:LatticeToggleCheckbox` | `C-c C-c` | Toggle the checkbox under the cursor |
+| `<leader>lS` | `:LatticeSchedule` | `C-c C-s` | Set or remove `SCHEDULED` |
+| `<leader>lD` | `:LatticeDeadline` | `C-c C-d` | Set or remove `DEADLINE` |
+| `<leader>l+` / `<leader>l-` | `:LatticePriorityUp` / `:LatticePriorityDown` | `S-Up` / `S-Down` | Raise or lower `[#A]` |
+| | `:LatticeMigrate` | | Convert this note's Lattice v0.1 items to Org headings |
+
+**Changing state**, by any of the commands above:
+
+- **Completing** a task (moving it to a done state) adds `CLOSED: [2026-11-09 Mon 14:30]` when `logging.done` is `"time"`. Off by default, as Org's `org-log-done`.
+- **Reopening** (done → active) removes `CLOSED`.
+- **Repeating tasks:** completing a task whose `SCHEDULED` or `DEADLINE` has a repeater moves each to its next occurrence and keeps the task open, back in its previous state (or `repeat_to_state`). With `logging.repeat` = `"time"` (the default, as Org's `org-log-repeat`) it also records `:LAST_REPEAT:` and Org's note `- State "DONE" from "NEXT" [2026-11-09 Mon 14:30]`. No `CLOSED` is added.
+- **Dependencies:** with `enforce.checkboxes` or `enforce.todo` set, a task can't be completed while its checkboxes or child TODO headings are open. Off by default, as in Org.
+- A parent heading's `[1/2]` cookie counting subtasks is updated.
+
+**Checkboxes:** toggling writes Markdown's `[x]` (or `[ ]`). Toggling a parent sets all its children to match. Then, as Org does, each parent box follows its children — `[x]` when all are checked, `[-]` when some are — and the `[n/m]` / `[n%]` cookies on the parent items and the enclosing heading are recalculated (an empty `[/]` or `[%]` is filled in). Heading states never change because of their checkboxes.
+
+**Dates:** `:LatticeSchedule` and `:LatticeDeadline` take `YYYY-MM-DD`, `today`, `tomorrow` or `+3d` / `+2w` / `+1m` / `+1y`, optionally followed by `HH:MM`. An empty answer removes the date. An existing repeater and warning are kept. Entries share one planning line in Org's order (`CLOSED`, `DEADLINE`, `SCHEDULED`).
+
+**Priority:** with no cookie, up or down starts at the default (`B`); going past the highest or lowest value removes the cookie, as Org's `S-Up` / `S-Down` do.
+
+**`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a checked waiting item becomes `DONE`. Sub-items stay below the new heading as a list. `[due:]` on headings becomes `DEADLINE` too. Review the result, then save.
 
 ## Commands and keymaps
 
@@ -195,9 +225,15 @@ Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<l
 | `:LatticeAddWaiting` | `<leader>ld` | Add a `## WAITING` heading with `:ASSIGNED:`            |
 | `:LatticeNextState`  | `<leader>ln` | Move the heading under the cursor to its next state     |
 | `:LatticePrevState`  | `<leader>lp` | Move the heading under the cursor to its previous state |
+| `:LatticeSetState`   | `<leader>ls` | Choose the heading's state                              |
+| `:LatticeToggleCheckbox` | `<leader>lx` | Toggle the checkbox under the cursor                |
+| `:LatticeSchedule`   | `<leader>lS` | Set or remove `SCHEDULED`                               |
+| `:LatticeDeadline`   | `<leader>lD` | Set or remove `DEADLINE`                                |
+| `:LatticePriorityUp` / `:LatticePriorityDown` | `<leader>l+` / `<leader>l-` | Raise or lower `[#A]` |
+| `:LatticeMigrate`    |              | Convert this note's v0.1 items to Org headings          |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
-Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state` and `health`.
+Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate` and `health`.
 
 Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
 
@@ -232,6 +268,8 @@ This file lives in the **notes root**, not in this plugin's repository. Every fi
   "priorities": { "values": ["A", "B", "C"], "default": "B" },
   "inherit": { "tags": true, "properties": [] },
   "deadlines": { "warning_days": 14 },
+  "logging": { "done": "time", "repeat": "time" },
+  "enforce": { "checkboxes": false, "todo": false },
   "scan": {
     "include": ["**/*.md"],
     "exclude": ["Archives/**", ".git/**", "Projects/Completed/**"]
@@ -253,6 +291,11 @@ This file lives in the **notes root**, not in this plugin's repository. Every fi
 | `priorities`     | `A`, `B`, `C`; default `B`     | Allowed priority values (single letters or digits, highest first) and the default used for sorting. |
 | `inherit.tags`   | `true`                         | Whether tasks inherit tags from enclosing headings and tasks |
 | `inherit.properties` | `[]`                       | Extra properties to inherit (or `true` for all). `PROJECT` and `WORKFLOW` always inherit. |
+| `logging.done`   | `false`                        | `"time"` adds `CLOSED: [timestamp]` when a task is completed (Org's `org-log-done`) |
+| `logging.repeat` | `"time"`                       | When a repeating task is completed, record `:LAST_REPEAT:` and a state note (Org's `org-log-repeat`); `false` turns it off |
+| `enforce.checkboxes` | `false`                    | Refuse to complete a task while its checkboxes are unchecked (Org's `org-enforce-todo-checkbox-dependencies`) |
+| `enforce.todo`   | `false`                        | Refuse to complete a task while its child TODO headings are open (Org's `org-enforce-todo-dependencies`) |
+| `repeat_to_state` | —                             | State a completed repeating task returns to; by default its previous state (Org's `org-todo-repeat-to-state`) |
 | `deadlines.warning_days` | `14`                   | Default deadline warning period for DUE SOON, as Org's `org-deadline-warning-days`. A deadline's own `-Nd` wins. |
 | `scan.include`   | `["**/*.md"]`                  | Files to scan. Only `.md` files are ever read.             |
 | `scan.exclude`   | `["Archives/**", ".git/**"]`   | Files and folders to skip. A list you give **replaces** the default, so keep `Archives/**` in it if you want Archives skipped. |
@@ -293,7 +336,7 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 - **Saved files only.** Lattice reads files from disk. A task you add or check off appears on the dashboard after you save the note and refresh.
 - **Manual refresh.** There is no file watching or background indexing. The dashboard and its line numbers reflect the last scan.
 - **Whole-tree scan.** Every refresh rescans all included notes synchronously. This is fast for typical note collections but not optimized for very large trees.
-- **Org subset, in progress.** Tasks, workflows, priorities, tags, properties, planning lines and the scheduling engine are done (milestones A–C of the spec). Editing commands that complete tasks (advancing repeaters, adding `CLOSED`) and keep parent checkboxes and progress cookies up to date come next, then a fuller agenda with project and priority filters. Until then `<leader>ln` / `<leader>lp` change the state word on the line only.
+- **Org subset, in progress.** Milestones A–D of the spec are done: tasks, workflows, metadata, scheduling, and editing. Still to come: a fuller agenda with project and priority filters, editing from the dashboard, refiling and archiving, and incremental refresh.
 - **Tree-sitter.** Lattice needs Neovim's Markdown parser, which ships with Neovim. A broken parser binary can crash Neovim when it loads; see [Troubleshooting](#troubleshooting).
 - **Symlinks** are skipped entirely (see above).
 - **Not yet built:** WBR preparation, AI-assisted commitment discovery, Portico publishing, and automated Drafts import are planned for later milestones (see [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md) §11). The dashboard doesn't show or pretend to support them.

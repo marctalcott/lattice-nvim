@@ -91,7 +91,7 @@ test("setup again removes the keymaps it set before", function()
   eq(vim.fn.maparg("<leader>ll", "n"), "")
   eq(vim.fn.maparg("<leader>nl", "n", false, true).desc, "Lattice: open dashboard")
   lattice.setup({ root = "~/x", keymaps = false })
-  for _, lhs in ipairs({ "<leader>nl", "<leader>lt", "<leader>ld", "<leader>lr", "<leader>ln", "<leader>lp" }) do
+  for _, lhs in ipairs({ "<leader>nl", "<leader>lt", "<leader>ld", "<leader>lr", "<leader>ln", "<leader>lp", "<leader>ls", "<leader>lx", "<leader>lS", "<leader>lD", "<leader>l+", "<leader>l-" }) do
     eq(vim.fn.maparg(lhs, "n"), "")
   end
   eq(config.active_keymaps, {})
