@@ -48,12 +48,12 @@ Press `<leader>ll` (`:Lattice`). The **Overview** shows these groups:
 
 | Group | What's in it |
 |---|---|
-| **MY TO DO** | Your open tasks: dated ones first, earliest date first, then undated ones |
+| **MY TO DO** | Your open tasks except `WAITING` ones: those with a deadline first, soonest first, then the rest |
 | **WAITING ON** | `WAITING` tasks, showing who you're waiting on and any promised date |
 | **OVERDUE** | Open tasks whose deadline has passed |
 | **TODAY** | Tasks scheduled today, tasks scheduled earlier that are still open, and deadlines due today |
 | **DUE SOON** | Deadlines inside their warning period (14 days by default, or the deadline's own `-3d`) |
-| **DONE** | The 20 most recently finished tasks |
+| **DONE** | Up to 20 finished tasks, from the most recently changed notes first |
 | **INBOX** | Only shown if an `Inbox/` folder exists in your notes root |
 | **WARNINGS** | Problems such as invalid dates, broken drawers or duplicate `:ID:`s; `Enter` jumps to the line |
 
@@ -117,7 +117,7 @@ Write meeting notes as usual. When an action item comes up, add it with a key in
 
 | Key | Does |
 |---|---|
-| `<leader>ln` / `<leader>lp` | Next / previous state: none → TODO → NEXT → DONE → CANCELED → none. This also turns a plain heading into a task |
+| `<leader>ln` / `<leader>lp` | Next / previous state: none → TODO → NEXT → WAITING → DONE → CANCELED → none. This also turns a plain heading into a task |
 | `<leader>ls` | Pick any state from a list |
 | `<leader>lx` | Toggle the checkbox under the cursor. Parent boxes and the `[n/m]` progress counts update automatically |
 | `<leader>lS` / `<leader>lD` | Set SCHEDULED / DEADLINE |
@@ -162,7 +162,7 @@ As with the other edits, refile and archive change buffers only, so save both no
 - **Use `NEXT`** for the one thing you'd actually do next on a project. The Projects view (`4`) shows it as the project's next action.
 - **Use `DEADLINE` for real due dates and `SCHEDULED` for when you plan to start.** Only deadlines put a task in OVERDUE and DUE SOON. Scheduled tasks show up in TODAY and stay there until they're done.
 - **Projects with their own states** (for example `BACKLOG READY IN PROGRESS BLOCKED`) are set up in `.lattice.json` in your notes root. A top-level `# Etna` heading that matches a workflow name makes the tasks under it use those states. Changes to that file apply when you press `r`, with no restart.
-- **If a task is missing**, run `:LatticeHealth`. The usual causes are:
+- **If a task is missing**, run `:LatticeHealth` to see how many notes were scanned, which states each workflow allows, and any warnings. The usual causes are:
   - a lowercase state
   - a checkbox instead of a heading
   - a heading inside a code block
