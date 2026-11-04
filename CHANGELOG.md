@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3 — 2026-11-04
+
+Documentation only. No code changes.
+
+### Added
+
+- [`TUTORIAL.md`](TUTORIAL.md), a walkthrough of daily use: what a task looks like, the dashboard and its views, filtering, editing from the dashboard and from notes, repeaters, refiling and archiving. The README links to it (#16).
+
 ## 0.2.2 — 2026-11-04
 
 Bug fixes from two code reviews of 0.2.1 (#14). No new features or settings.
