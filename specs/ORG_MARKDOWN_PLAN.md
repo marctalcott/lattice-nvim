@@ -12,7 +12,7 @@ One pull request per spec milestone (§17). The plugin keeps working after every
 | 2 | B — Metadata and workflows | Planning lines, priorities, tags (local and inherited), property drawers, `STATE`, project and workflow resolution, `.lattice.json` `workflows`, legacy v0.1 reading; scanner and dashboard switch to the new parser; v0.1 `parser.lua` removed | States, priorities, tags on rows (checkbox tasks were later withdrawn, D14) |
 | 3 | C — Scheduling engine | Timestamps, SCHEDULED, DEADLINE with warnings, repeaters (`+`, `++`, `.+`) with Org calendar arithmetic | Agenda dates come from SCHEDULED/DEADLINE |
 | 4 | D — Mutation engine | Controlled mutation layer: `set_state`, checkbox sync, progress cookies, parent rollup, CLOSED, scheduling edits, recurrence on completion, `:LatticeMigrate` | Editing commands; migration of v0.1 notes |
-| 5 | E — Integration | Unified index, agenda and project queries, filtering, incremental refresh, PAR-026..030 end to end | Agenda dashboard |
+| 5 | E — Integration | Unified index, agenda and project queries, filtering, incremental refresh, dashboard editing, refile and archive, PAR-029..030 end to end | Week agenda, TODO and project views |
 
 ## Decisions
 
@@ -116,6 +116,17 @@ Found while testing in LazyVim: saving a note runs a Markdown formatter that ins
 - **Priority:** `org-priority-start-cycle-with-default` behaviour: none → default; past either end → removed.
 - **Migration (D3):** each v0.1 item becomes a heading one level below its enclosing heading (nested items deeper), its sub-items dedented beneath it, with blank lines around it.
 - **Deferred to milestone E:** `refile_task` and `archive_task` (§14.2), which move text between notes, and editing from the dashboard.
+
+### D17. Integration (milestone E, 2026-11-03)
+
+- **Index and refresh.** The scanner keeps each note's parse, stamped with its file's mtime and size (or its buffer's changedtick), and re-parses only notes whose stamp changed; a config change drops the cache. Loaded buffers with unsaved changes are read instead of their files (§14.1). Saving a note under the root refreshes an open dashboard (BufWritePost). No file watching outside Neovim and no background work.
+- **Agenda.** Week view (Org's `C-c a a`): each day lists scheduled items, deadlines and repeat occurrences; today adds open items scheduled earlier (`Sched. Nx`), overdue deadlines (`N d. ago`) and deadlines inside their warning (`In N d.`). Done tasks are left out (§9.3 completed-task suppression). Sort: timed first, then priority (missing = default), then deadlines before scheduled, oldest first. TODO list (`C-c a t`): priority, then deadline. Projects: counts, `:PROJECT_STATUS:`, next action (first `NEXT`, else most urgent).
+- **Filters.** On `F`, so `/` keeps its Vim meaning (search; Org's agenda uses `/` for its tag filter). One small language for every view (`+tag -tag #A project:X @person state:S words`) instead of Org's separate filter commands.
+- **Dashboard edits** follow Org's agenda keys where they don't clash with the dashboard (`t`, `+`/`-`, `S`/`D`, `s` to save). They edit the note's buffer (loaded hidden and listed), never the file; `s` saves only buffers the dashboard edited. A row whose line moved is found again by its title; if the title changed, the edit is refused.
+- **Refile** (`C-c C-w`): targets are every heading in every note plus "end of note"; the subtree goes to the end of the target's subtree, one level deeper, re-levelled. No refile logging (`org-log-refile` nil).
+- **Archive**: Org's default location adapted to Markdown, `%s_archive.md` beside the note, the subtree promoted to level 1 with Org's five ARCHIVE_* properties; archive notes are excluded from scanning by default. Lattice never creates folders, so a location in a missing folder is an error.
+- **Two-note edits** (refile across notes, archive) check both buffers before changing either, then apply both.
+- **Constraint change.** AGENTS.md previously limited edits to the current note. Refile, archive and dashboard edits change other notes' buffers, as Org's do; files are still written only when the user saves.
 
 ## Compatibility classification (§2.2)
 

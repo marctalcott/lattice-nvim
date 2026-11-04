@@ -604,6 +604,193 @@ function M.migrate(lines, cfg)
   return out, #work
 end
 
+-- Refile and archive (§14.2) -----------------------------------------------
+
+-- The subtree of the heading on `line`: first and last line (trailing
+-- blank lines left out), its level, and the lines of every heading in it.
+local function subtree(lines, line)
+  local structure = parse_structure(lines)
+  local heading = heading_at(structure, line)
+  if not heading then
+    return nil, "put the cursor on a heading"
+  end
+  local last = heading.stop
+  while last > line and vim.trim(lines[last] or "") == "" do
+    last = last - 1
+  end
+  local inner = {}
+  for _, h in ipairs(structure.headings) do
+    if h.line >= line and h.line <= last then
+      inner[#inner + 1] = h.line
+    end
+  end
+  return { first = line, last = last, level = heading.level, headings = inner }
+end
+
+-- The subtree's lines with every heading moved `delta` levels.
+local function shifted_block(lines, tree, delta)
+  local block = vim.list_slice(lines, tree.first, tree.last)
+  for _, at in ipairs(tree.headings) do
+    local i = at - tree.first + 1
+    local indent, hashes, rest = block[i]:match("^( ? ? ?)(#+)(.*)$")
+    local level = #hashes + delta
+    if level > 6 then
+      return nil, "the subtree would need headings deeper than ######"
+    end
+    block[i] = indent .. ("#"):rep(level) .. rest
+  end
+  return block
+end
+
+local function remove_block(lines, tree)
+  local out = copy(lines)
+  for _ = tree.first, tree.last do
+    table.remove(out, tree.first)
+  end
+  -- Don't leave two blank lines where the subtree was.
+  if tree.first > 1 and vim.trim(out[tree.first - 1] or "") == "" and vim.trim(out[tree.first] or "") == "" then
+    table.remove(out, tree.first)
+  end
+  while #out > 1 and vim.trim(out[#out]) == "" and vim.trim(out[#out - 1]) == "" do
+    table.remove(out)
+  end
+  return out
+end
+
+-- Inserts `block` at the end of the subtree of the heading on `line`, or at
+-- the end of the note when `line` is nil, with blank lines around it.
+local function insert_block(lines, line, block)
+  local out = copy(lines)
+  local after = #out
+  if line then
+    local structure = parse_structure(out)
+    local heading = heading_at(structure, line)
+    after = heading.stop
+  end
+  while after > 0 and vim.trim(out[after] or "") == "" and (not line or after > line) do
+    after = after - 1
+  end
+  local insert = vim.list_extend({}, block)
+  if after > 0 then
+    table.insert(insert, 1, "")
+  end
+  if out[after + 1] ~= nil and vim.trim(out[after + 1]) ~= "" then
+    insert[#insert + 1] = ""
+  end
+  if #out == 1 and out[1] == "" then
+    return vim.list_extend({}, block)
+  end
+  for i = #insert, 1, -1 do
+    table.insert(out, after + 1, insert[i])
+  end
+  return out
+end
+
+--- Moves the subtree on `line` under the heading on `dest_line` (one level
+--- below it; its headings re-levelled), or to the end of the note when
+--- `dest_line` is nil, keeping its level. With `dest_lines` nil the target
+--- is in the same note. Returns new source lines and new destination lines
+--- (nil for the same note), or nil and an error.
+function M.refile(lines, line, dest_lines, dest_line)
+  local tree, err = subtree(lines, line)
+  if not tree then
+    return nil, err
+  end
+  local delta = 0
+  local target_lines = dest_lines or lines
+  if dest_line then
+    local dest = heading_at(parse_structure(target_lines), dest_line)
+    if not dest then
+      return nil, "the target is not a heading"
+    end
+    delta = dest.level + 1 - tree.level
+  end
+  local block, block_err = shifted_block(lines, tree, delta)
+  if not block then
+    return nil, block_err
+  end
+  if dest_lines then
+    return remove_block(lines, tree), insert_block(dest_lines, dest_line, block)
+  end
+  if dest_line and dest_line >= tree.first and dest_line <= tree.last then
+    return nil, "a heading can't be refiled under itself"
+  end
+  local removed = remove_block(lines, tree)
+  if dest_line and dest_line > tree.last then
+    dest_line = dest_line - (#lines - #removed)
+  end
+  return insert_block(removed, dest_line, block), nil
+end
+
+--- Archives the subtree on `line`, Org style: it becomes a top-level
+--- heading at the end of the archive note, with :ARCHIVE_TIME:,
+--- :ARCHIVE_FILE:, :ARCHIVE_OLPATH:, :ARCHIVE_CATEGORY: and
+--- :ARCHIVE_TODO:. `archive_lines` nil starts a new archive note. Returns
+--- new source lines and new archive lines, or nil and an error.
+function M.archive(lines, cfg, line, rel, archive_lines, now)
+  now = now or M.now()
+  local tree, err = subtree(lines, line)
+  if not tree then
+    return nil, err
+  end
+  local block, block_err = shifted_block(lines, tree, 1 - tree.level)
+  if not block then
+    return nil, block_err
+  end
+  local parsed = tasks.parse(lines, cfg)
+  local outline, todo = {}, nil
+  for _, heading in ipairs(parsed and parsed.headings or {}) do
+    if heading.line == line then
+      outline = vim.list_slice(heading.outline, 1, #heading.outline - 1)
+    end
+  end
+  for _, task in ipairs(parsed and parsed.tasks or {}) do
+    if task.line == line then
+      todo = task.state
+    end
+  end
+  local category = vim.fn.fnamemodify(rel, ":t:r")
+  for _, entry in ipairs({
+    { "ARCHIVE_TIME", inactive(now) },
+    { "ARCHIVE_FILE", rel },
+    { "ARCHIVE_OLPATH", #outline > 0 and table.concat(outline, "/") or nil },
+    { "ARCHIVE_CATEGORY", category },
+    { "ARCHIVE_TODO", todo },
+  }) do
+    if entry[2] then
+      block = assert(M.set_property(block, 1, entry[1], entry[2]))
+    end
+  end
+  if archive_lines == nil or (#archive_lines == 1 and archive_lines[1] == "") then
+    archive_lines = { ("Archived entries from %s."):format(rel) }
+  end
+  return remove_block(lines, tree), insert_block(archive_lines, nil, block)
+end
+
+--- The buffer for a note, loaded (hidden but listed) if it is not open,
+--- so edits keep any unsaved changes already there and stay visible.
+function M.note_buffer(path)
+  local buf = vim.fn.bufadd(path)
+  if not vim.api.nvim_buf_is_loaded(buf) then
+    vim.fn.bufload(buf)
+  end
+  vim.bo[buf].buflisted = true
+  return buf
+end
+
+--- Applies edits to two buffers together: both are checked first, so
+--- either both change or neither does.
+function M.apply_pair(buf_a, old_a, new_a, buf_b, old_b, new_b)
+  for _, pair in ipairs({ { buf_a, old_a }, { buf_b, old_b } }) do
+    if not vim.deep_equal(vim.api.nvim_buf_get_lines(pair[1], 0, -1, false), pair[2]) then
+      return nil, "a note changed since this edit was prepared; nothing was changed"
+    end
+  end
+  assert(M.apply(buf_b, old_b, new_b))
+  assert(M.apply(buf_a, old_a, new_a))
+  return true
+end
+
 -- Applying ---------------------------------------------------------------------
 
 --- Writes `new` over `old` in `buf`: only the changed hunks, bottom-up, as

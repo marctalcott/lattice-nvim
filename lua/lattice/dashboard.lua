@@ -12,6 +12,8 @@ local DEFAULT_WARNING_DAYS = 14
 local DONE_LIMIT = 20 -- most recent done items shown
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
 local FOOTER = "Enter  Open note    r  Refresh    q  Close    ?  Help"
+local FOOTER_2 = "1 Overview  2 Week  3 TODOs  4 Projects    F Filter    t State  +/- Priority  S/D Dates  s Save"
+local VIEW_NAMES = { overview = "Overview", week = "Week agenda", todo = "All TODOs", projects = "Projects" }
 
 local WINDOW_OPTIONS = {
   number = false,
@@ -25,7 +27,17 @@ local WINDOW_OPTIONS = {
 }
 
 local ns = vim.api.nvim_create_namespace("lattice.dashboard")
-local state = { buf = nil, prev_buf = nil, result = nil, targets = {}, help = false }
+local state = {
+  buf = nil,
+  prev_buf = nil,
+  result = nil,
+  targets = {},
+  help = false,
+  view = "overview", -- overview | week | todo | projects
+  query = "", -- agenda filter (agenda.parse_filter)
+  week_start = nil, -- Monday shown by the week view; nil: this week
+  edited = {}, -- buffers changed from the dashboard, by number
+}
 
 local function width(text)
   return vim.fn.strdisplaywidth(text)
@@ -36,6 +48,7 @@ local function pad(text, column)
 end
 
 local schedule = require("lattice.schedule")
+local agenda = require("lattice.agenda")
 
 local function to_time(iso)
   local y, m, d = iso:match("^(%d+)-(%d+)-(%d+)$")
@@ -275,8 +288,16 @@ end
 local function help_lines(keymaps)
   local lines = {
     "KEYS",
-    "  Enter   Open the note at the task's line",
-    "  r       Rescan notes and reread .lattice.json",
+    "  Enter   Open the note at the task (on a project: list its TODOs)",
+    "  1 2 3 4 Overview, week agenda, all TODOs (by priority), projects",
+    "  F       Filter: +tag -tag #A project:Name @person state:NEXT words",
+    "  /       Search the dashboard text, as in any buffer",
+    "  b f .   Previous, next, this week (week agenda)",
+    "  t       Change the task's state (Org agenda's t)",
+    "  + -     Raise or lower its priority",
+    "  S D     Set or remove its SCHEDULED / DEADLINE",
+    "  s       Save the notes edited from here",
+    "  r       Rescan changed notes and reread .lattice.json",
     "  q       Close the dashboard",
     "  ?       Toggle this help",
     "",
@@ -293,6 +314,7 @@ local function help_lines(keymaps)
     "  :LatticeSchedule / :LatticeDeadline  Set or remove a date",
     "  :LatticePriorityUp / :LatticePriorityDown  Change [#A]",
     "  :LatticeMigrate     Convert this note's v0.1 items to Org",
+    "  :LatticeRefile / :LatticeArchive  Move a subtree / archive it",
   }
   if keymaps then
     local mapped = {}
@@ -309,6 +331,8 @@ local function help_lines(keymaps)
       { "deadline", "deadline" },
       { "priority_up", "priority up" },
       { "priority_down", "priority down" },
+      { "refile", "refile" },
+      { "archive", "archive" },
     }) do
       if keymaps[item[1]] then
         mapped[#mapped + 1] = ("%s %s"):format(keymaps[item[1]], item[2])
@@ -319,8 +343,65 @@ local function help_lines(keymaps)
     end
   end
   lines[#lines + 1] = ""
-  lines[#lines + 1] = "Lattice reads saved files: save a note, then refresh."
+  lines[#lines + 1] = "Lattice reads saved notes and unsaved open buffers; saving a note refreshes this view."
   return lines
+end
+
+local WEEK_NOTE_WIDTH = 12
+
+--- Org's week agenda as dashboard groups: one per day, entries labelled
+--- "Scheduled", "Deadline", "Sched. 3x", "In 4 d." or "2 d. ago", timed
+--- entries with their time.
+function M.week_groups(tasks, today, first, warning_days, priorities)
+  local days = agenda.week(tasks, first, today, { warning_days = warning_days, priorities = priorities })
+  local all = {}
+  for _, day in ipairs(days) do
+    for _, entry in ipairs(day.entries) do
+      all[#all + 1] = entry.task
+    end
+  end
+  local col = label_column(all)
+  local groups = {}
+  for _, day in ipairs(days) do
+    local rows = {}
+    for _, entry in ipairs(day.entries) do
+      local note = entry.time and (entry.time .. " " .. entry.note) or entry.note
+      local hl = entry.kind == "deadline" and (note:find("ago", 1, true) and "DiagnosticError" or "DiagnosticWarn") or "DiagnosticInfo"
+      local row = build_rows({ entry.task }, today, pad(note, WEEK_NOTE_WIDTH), hl, col, true)[1]
+      rows[#rows + 1] = row
+    end
+    local y, m, d = day.date:match("^(%d+)-(%d+)-(%d+)$")
+    local label = ("%s %s %s"):format(WEEKDAYS[os.date("*t", to_time(day.date)).wday], MONTHS[tonumber(m)], d)
+    if y ~= today:sub(1, 4) then
+      label = label .. ", " .. y
+    end
+    groups[#groups + 1] = { title = label, note = day.today and "[today]" or nil, rows = rows }
+  end
+  return groups
+end
+
+--- The projects view: one row per project with counts, status and next
+--- action. Enter lists the project's TODOs.
+function M.projects_group(projects)
+  local name_col = 0
+  for _, project in ipairs(projects) do
+    name_col = math.max(name_col, width(project.name))
+  end
+  local rows = {}
+  for _, project in ipairs(projects) do
+    local line = pad("  " .. project.name, 2 + name_col) .. ("   %d open, %d done"):format(project.open, project.done)
+    local parts = { { col = 2, len = #project.name, hl = "Title" } }
+    if project.status then
+      line = line .. "   status: " .. project.status
+    end
+    if project.next then
+      local next_text = "   next: " .. project.next.state .. " " .. project.next.title
+      parts[#parts + 1] = { col = #line + 3, len = #next_text - 3, hl = "Comment" }
+      line = line .. next_text
+    end
+    rows[#rows + 1] = { line = line, parts = parts, project = project.name, task = {} }
+  end
+  return { title = "PROJECTS", note = "[Enter lists a project's TODOs]", rows = rows }
 end
 
 --- @param result table  output of scanner.collect
@@ -340,29 +421,47 @@ function M.render(result, today, opts)
 
   local groups = {}
   local open_count = 0
+  local view = opts.view or "overview"
   if not result.error then
-    local todo, waiting = M.sorted(result.tasks, "todo"), M.sorted(result.tasks, "waiting")
-    open_count = #todo + #waiting
-    local col = label_column(vim.list_extend(vim.list_extend({}, todo), waiting))
+    local tasks = agenda.filter(result.tasks, opts.query)
     local warning_days = (result.deadlines or {}).warning_days or DEFAULT_WARNING_DAYS
-    groups = {
-      { title = "MY TO DO", rows = build_rows(todo, today, "[ ]", "Comment", col) },
-      { title = "WAITING ON", rows = build_rows(waiting, today, "[ ]", "Comment", col) },
-      { title = "OVERDUE", rows = build_rows(M.overdue(result.tasks, today), today, "! ", "DiagnosticError", col) },
-      {
-        title = "TODAY",
-        note = "[scheduled today or earlier and still open; deadlines today]",
-        rows = build_rows(M.today(result.tasks, today), today, "» ", "DiagnosticInfo", col),
-      },
-      {
-        title = "DUE SOON",
-        note = ("[deadlines within their warning period, default %d days]"):format(warning_days),
-        rows = build_rows(M.due_soon(result.tasks, today, warning_days), today, "· ", "DiagnosticWarn", col),
-      },
-      M.done_group(result.tasks, today, col),
-    }
-    if result.inbox then
-      groups[#groups + 1] = { title = "INBOX", rows = build_inbox_rows(result.inbox, today) }
+    local todo, waiting = M.sorted(tasks, "todo"), M.sorted(tasks, "waiting")
+    open_count = #todo + #waiting
+    if view == "week" then
+      groups = M.week_groups(tasks, today, opts.week_start or agenda.week_start(today), warning_days, result.priorities)
+    elseif view == "todo" then
+      local list = agenda.todo_list(tasks, nil, result.priorities)
+      groups = {
+        {
+          title = "ALL TODOS",
+          note = "[by priority, then deadline]",
+          rows = build_rows(list, today, "[ ]", "Comment", label_column(list)),
+        },
+      }
+    elseif view == "projects" then
+      groups = { M.projects_group(agenda.projects(tasks, result.priorities)) }
+      open_count = math.max(open_count, #groups[1].rows)
+    else
+      local col = label_column(vim.list_extend(vim.list_extend({}, todo), waiting))
+      groups = {
+        { title = "MY TO DO", rows = build_rows(todo, today, "[ ]", "Comment", col) },
+        { title = "WAITING ON", rows = build_rows(waiting, today, "[ ]", "Comment", col) },
+        { title = "OVERDUE", rows = build_rows(M.overdue(tasks, today), today, "! ", "DiagnosticError", col) },
+        {
+          title = "TODAY",
+          note = "[scheduled today or earlier and still open; deadlines today]",
+          rows = build_rows(M.today(tasks, today), today, "» ", "DiagnosticInfo", col),
+        },
+        {
+          title = "DUE SOON",
+          note = ("[deadlines within their warning period, default %d days]"):format(warning_days),
+          rows = build_rows(M.due_soon(tasks, today, warning_days), today, "· ", "DiagnosticWarn", col),
+        },
+        M.done_group(tasks, today, col),
+      }
+      if result.inbox then
+        groups[#groups + 1] = { title = "INBOX", rows = build_inbox_rows(result.inbox, today) }
+      end
     end
   end
 
@@ -383,6 +482,13 @@ function M.render(result, today, opts)
     end
     add(where, "Comment")
   end
+  if view ~= "overview" or not agenda.is_empty(opts.query) then
+    local status = "View: " .. VIEW_NAMES[view]
+    if not agenda.is_empty(opts.query) then
+      status = status .. "    Filter: " .. opts.query .. "    (F then Enter clears)"
+    end
+    add(status, "Special")
+  end
   add(("─"):rep(rule_width), "Comment")
 
   if opts.help then
@@ -398,7 +504,7 @@ function M.render(result, today, opts)
       add("  " .. line)
     end
     add("")
-  elseif open_count == 0 then
+  elseif open_count == 0 and agenda.is_empty(opts.query) and view == "overview" then
     local defaults = config.defaults()
     local headings = result.headings or defaults.headings
     local sequences = (result.keywords or defaults.keywords).sequences
@@ -420,7 +526,8 @@ function M.render(result, today, opts)
     end
     for _, row in ipairs(group.rows) do
       add(row.line)
-      targets[#lines] = { path = row.task.path, line = row.task.line }
+      targets[#lines] = row.project and { project = row.project }
+        or { path = row.task.path, line = row.task.line, title = row.task.title, kind = row.task.kind }
       for _, part in ipairs(row.parts) do
         highlights[#highlights + 1] = { line = #lines - 1, col = part.col, len = part.len, hl = part.hl }
       end
@@ -457,6 +564,7 @@ function M.render(result, today, opts)
 
   add(("─"):rep(rule_width), "Comment")
   add(FOOTER, "Comment")
+  add(FOOTER_2, "Comment")
   return { lines = lines, highlights = highlights, targets = targets }
 end
 
@@ -468,6 +576,9 @@ local function paint()
   local view = M.render(state.result, os.date("%Y-%m-%d"), {
     help = state.help,
     keymaps = config.active_keymaps,
+    view = state.view,
+    query = state.query,
+    week_start = state.week_start,
   })
   local buf = state.buf
   state.targets = view.targets
@@ -512,13 +623,226 @@ local function report()
   vim.notify(summary, problems > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
 end
 
---- Rereads config and Markdown from disk.
-function M.refresh()
+--- Rereads config and notes (only the ones that changed) and repaints.
+--- `quiet` skips the summary message.
+function M.refresh(quiet)
   state.result = scanner.collect(config.options.root)
   if buffer_ready() then
     paint()
   end
-  report()
+  if quiet ~= true then
+    report()
+  end
+end
+
+--- Repaints an open dashboard after a note under the root was saved
+--- (incremental refresh: only that note is re-parsed).
+function M.on_note_saved(path)
+  local root = config.options.root
+  if not buffer_ready() or not root then
+    return
+  end
+  local real_root = vim.uv.fs_realpath(root) or root
+  local real = vim.uv.fs_realpath(path) or path
+  if real:sub(1, #real_root + 1) == real_root .. "/" then
+    M.refresh(true)
+  end
+end
+
+function M.set_view(view)
+  if not buffer_ready() then
+    return
+  end
+  state.view = view
+  paint()
+  local first
+  for line in pairs(state.targets) do
+    first = first and math.min(first, line) or line
+  end
+  if first then
+    vim.api.nvim_win_set_cursor(0, { first, 0 })
+  end
+end
+
+--- Prompts for an agenda filter ("+tag -tag #A project:Name @person
+--- state:NEXT words"); an empty answer clears it.
+function M.prompt_filter()
+  if not buffer_ready() then
+    return
+  end
+  vim.ui.input({ prompt = "Filter (+tag -tag #A project:Name @person state:NEXT words): ", default = state.query }, function(answer)
+    if answer == nil then
+      return
+    end
+    state.query = vim.trim(answer)
+    paint()
+  end)
+end
+
+function M.shift_week(weeks)
+  if not buffer_ready() then
+    return
+  end
+  local today = os.date("%Y-%m-%d")
+  if weeks == 0 then
+    state.week_start = nil
+  else
+    state.week_start = schedule.add_days(state.week_start or agenda.week_start(today), 7 * weeks)
+  end
+  if state.view ~= "week" then
+    state.view = "week"
+  end
+  paint()
+end
+
+local function note_buffer(path)
+  return require("lattice.mutate").note_buffer(path)
+end
+
+-- The line of a task's heading in `lines`: its recorded line if that still
+-- carries its title, else the heading with that title nearest to it, so
+-- edits elsewhere in the note don't send Lattice to the wrong line (PAR-030).
+function M.locate(lines, target)
+  local function holds(n)
+    local text = lines[n]
+    return text ~= nil and target.title ~= nil and text:find(target.title, 1, true) ~= nil
+  end
+  if target.title == nil or holds(target.line) then
+    return target.line
+  end
+  local best
+  for n, text in ipairs(lines) do
+    if text:match("^ ? ? ?#+%s") and holds(n) then
+      if not best or math.abs(n - target.line) < math.abs(best - target.line) then
+        best = n
+      end
+    end
+  end
+  return best
+end
+
+-- Runs `op(lines, cfg, line)` from mutate on the note behind the row under
+-- the cursor, writes the result into that note's buffer (never the file),
+-- and repaints. Org's agenda edits the same way.
+local function edit_row(op)
+  local target = state.targets[vim.api.nvim_win_get_cursor(0)[1]]
+  if not target or not target.path or target.kind ~= "heading" then
+    vim.notify("Lattice: put the cursor on a task row", vim.log.levels.WARN)
+    return
+  end
+  local cfg = state.result.cfg
+  local buf = note_buffer(target.path)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local line = M.locate(lines, target)
+  if not line then
+    vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)
+    return
+  end
+  local mutate = require("lattice.mutate")
+  local ok, new_lines, message = pcall(op, lines, cfg, line)
+  if not ok or not new_lines then
+    vim.notify("Lattice: " .. tostring(ok and message or new_lines), vim.log.levels.WARN)
+    return
+  end
+  local applied, err = mutate.apply(buf, lines, new_lines)
+  if not applied then
+    vim.notify("Lattice: " .. err, vim.log.levels.WARN)
+    return
+  end
+  if applied > 0 then
+    state.edited[buf] = true
+  end
+  M.refresh(true)
+  if message then
+    vim.notify("Lattice: " .. message, vim.log.levels.INFO)
+  end
+end
+
+function M.row_state()
+  local target = state.targets[vim.api.nvim_win_get_cursor(0)[1]]
+  if not target or target.kind ~= "heading" then
+    vim.notify("Lattice: put the cursor on a task row", vim.log.levels.WARN)
+    return
+  end
+  local cfg = state.result.cfg
+  local buf = note_buffer(target.path)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local line = M.locate(lines, target)
+  local parsed = line and require("lattice.tasks").parse(lines, cfg)
+  local kws = parsed and parsed.keywords_at[line]
+  if not kws then
+    vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)
+    return
+  end
+  local choices = {}
+  for _, cycle in ipairs(kws.cycles) do
+    vim.list_extend(choices, cycle)
+  end
+  choices[#choices + 1] = "(no state)"
+  vim.ui.select(choices, { prompt = "State: " }, function(choice)
+    if choice then
+      edit_row(function(l, c, n)
+        return require("lattice.mutate").set_state(l, c, n, choice == "(no state)" and "" or choice)
+      end)
+    end
+  end)
+end
+
+function M.row_priority(direction)
+  edit_row(function(lines, cfg, line)
+    return require("lattice.mutate").shift_priority(lines, cfg, line, direction)
+  end)
+end
+
+function M.row_date(keyword)
+  local target = state.targets[vim.api.nvim_win_get_cursor(0)[1]]
+  if not target or target.kind ~= "heading" then
+    vim.notify("Lattice: put the cursor on a task row", vim.log.levels.WARN)
+    return
+  end
+  local label = keyword == "SCHEDULED" and "Schedule" or "Deadline"
+  vim.ui.input({ prompt = label .. " (YYYY-MM-DD, today, +3d, optional HH:MM; empty removes): " }, function(answer)
+    if answer == nil then
+      return
+    end
+    answer = vim.trim(answer)
+    edit_row(function(lines, cfg, line)
+      local raw
+      if answer ~= "" then
+        local when = require("lattice.insert").read_date(answer, os.date("%Y-%m-%d"))
+        if not when then
+          return nil, ("%q is not a date Lattice understands; nothing changed"):format(answer)
+        end
+        local timestamp = require("lattice.timestamp")
+        local ts = assert(timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">"))
+        local parsed = require("lattice.tasks").parse(lines, cfg)
+        for _, task in ipairs(parsed and parsed.tasks or {}) do
+          local existing = task.line == line and task[keyword:lower()]
+          if existing then
+            ts.repeater, ts.warning = existing.repeater, existing.warning
+          end
+        end
+        raw = schedule.format(ts)
+      end
+      return require("lattice.mutate").set_planning(lines, line, keyword, raw)
+    end)
+  end)
+end
+
+--- Saves the notes changed from the dashboard (Org agenda's `s`).
+function M.save_edited()
+  local saved = 0
+  for buf in pairs(state.edited) do
+    if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified then
+      vim.api.nvim_buf_call(buf, function()
+        vim.cmd("silent write")
+      end)
+      saved = saved + 1
+    end
+  end
+  state.edited = {}
+  M.refresh(true)
+  vim.notify(("Lattice: saved %d note(s)"):format(saved), vim.log.levels.INFO)
 end
 
 function M.is_dashboard(buf)
@@ -538,6 +862,12 @@ function M.jump()
   if not target then
     return
   end
+  if target.project then
+    state.view = "todo"
+    state.query = "project:" .. target.project
+    paint()
+    return
+  end
   if vim.fn.filereadable(target.path) == 0 then
     vim.notify("Lattice: " .. target.path .. " no longer exists; press r to refresh", vim.log.levels.WARN)
     return
@@ -550,7 +880,8 @@ function M.jump()
     return
   end
   local last = vim.api.nvim_buf_line_count(0)
-  vim.api.nvim_win_set_cursor(0, { math.min(target.line, last), 0 })
+  local line = M.locate(vim.api.nvim_buf_get_lines(0, 0, -1, false), target) or target.line
+  vim.api.nvim_win_set_cursor(0, { math.min(line, last), 0 })
 end
 
 function M.close()
@@ -565,6 +896,7 @@ function M.close()
     end
   end
   state.buf, state.prev_buf, state.result, state.targets, state.help = nil, nil, nil, {}, false
+  state.view, state.query, state.week_start = "overview", "", nil
   vim.api.nvim_buf_delete(buf, { force = true })
 end
 
@@ -587,6 +919,42 @@ local function create_buffer()
   map("r", M.refresh, "Lattice: refresh")
   map("q", M.close, "Lattice: close")
   map("?", M.toggle_help, "Lattice: toggle help")
+  map("1", function()
+    M.set_view("overview")
+  end, "Lattice: overview")
+  map("2", function()
+    M.set_view("week")
+  end, "Lattice: week agenda")
+  map("3", function()
+    M.set_view("todo")
+  end, "Lattice: all TODOs")
+  map("4", function()
+    M.set_view("projects")
+  end, "Lattice: projects")
+  map("F", M.prompt_filter, "Lattice: filter")
+  map("b", function()
+    M.shift_week(-1)
+  end, "Lattice: previous week")
+  map("f", function()
+    M.shift_week(1)
+  end, "Lattice: next week")
+  map(".", function()
+    M.shift_week(0)
+  end, "Lattice: this week")
+  map("t", M.row_state, "Lattice: change state")
+  map("+", function()
+    M.row_priority(1)
+  end, "Lattice: raise priority")
+  map("-", function()
+    M.row_priority(-1)
+  end, "Lattice: lower priority")
+  map("S", function()
+    M.row_date("SCHEDULED")
+  end, "Lattice: schedule")
+  map("D", function()
+    M.row_date("DEADLINE")
+  end, "Lattice: deadline")
+  map("s", M.save_edited, "Lattice: save edited notes")
 
   -- A plain, unwrapped view in whichever window shows the dashboard.
   vim.api.nvim_create_autocmd("BufWinEnter", {
