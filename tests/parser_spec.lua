@@ -248,11 +248,11 @@ test("parses valid due dates and strips the tag", function()
   eq(task.text, "Send update")
 end)
 
-test("invalid dates leave the task undated and are reported", function()
+test("invalid dates leave the task undated, stay in its text, and are reported", function()
   for _, value in ipairs({ "2026-13-01", "2026-02-30", "2026-2-1", "soon", "" }) do
     local result = parse(("# Notes\n- TODO Task [due:%s]"):format(value))
     eq(result.tasks[1].due, nil)
-    eq(result.tasks[1].text, "Task")
+    eq(result.tasks[1].text, ("Task [due:%s]"):format(value))
     eq(result.date_errors, { { line = 2, tag = "due", value = value } })
   end
 end)
@@ -272,7 +272,7 @@ end)
 test("invalid promised dates are reported and the task stays visible", function()
   local result = parse("## Waiting On\n- Estimate [promised:soon]")
   eq(result.tasks[1].promised, nil)
-  eq(result.tasks[1].text, "Estimate")
+  eq(result.tasks[1].text, "Estimate [promised:soon]")
   eq(result.date_errors, { { line = 2, tag = "promised", value = "soon" } })
 end)
 

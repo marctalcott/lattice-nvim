@@ -120,7 +120,7 @@ Notes written for Lattice 0.1 keep working, and `:LatticeHealth` counts what sti
 | Bullets with a state, `- TODO x` or `- [ ] NEXT x` | Items in that state; a checked box or a done state means done |
 | Bullets under a `## Waiting On` heading | Waiting items (state `WAITING` when they have none) |
 | `@Name` at the start of a waiting item | `:ASSIGNED: Name` |
-| `[due:YYYY-MM-DD]` | The task's date, like `DEADLINE` (a real `DEADLINE` wins) |
+| `[due:YYYY-MM-DD]` | The task's date, like `DEADLINE` (a real `DEADLINE` wins). An invalid date stays in the title and is listed under WARNINGS. |
 | `[promised:YYYY-MM-DD]` | `:PROMISED:` |
 | Front matter `todo: TODO NEXT \| DONE` | That note's workflow |
 
@@ -206,8 +206,8 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 |------|------------------|
 | `+etna` / `-later` | have / lack the tag, own or inherited |
 | `#A` | have that priority (several: any of them) |
-| `project:Etna` | belong to the project (case-insensitive) |
-| `@elira` | have an `:ASSIGNED:` containing it |
+| `project:Etna` | belong to the project (case-insensitive); quote a name with spaces: `project:"Home Renovation"` |
+| `@elira` | have an `:ASSIGNED:` containing it (`@"Elira Voss"` for a full name) |
 | `state:NEXT` | are in that state (several: any of them) |
 | any other word | have it in their title |
 
@@ -297,7 +297,7 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 
 **Priority:** with no cookie, up or down starts at the default (`B`); going past the highest or lowest value removes the cookie, as Org's `S-Up` / `S-Down` do.
 
-**`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a checked waiting item becomes `DONE`. Sub-items stay below the new heading as a list. `[due:]` on headings becomes `DEADLINE` too. Review the result, then save.
+**`:LatticeMigrate`** asks first, then rewrites the note's v0.1 forms: each `- TODO x` bullet and each `Waiting On` bullet becomes a heading one level below its enclosing heading (deeper for nested ones), `[due:]` becomes `DEADLINE`, `@Name` becomes `:ASSIGNED:`, `[promised:]` becomes `:PROMISED:`, and a finished item (a checked box or a done state) gets a done state. Sub-items stay directly below their own heading as a list, before the headings of any nested items. An invalid date such as `[due:2026-02-30]` stays in the title, and is still listed under WARNINGS. `[due:]` on headings becomes `DEADLINE` too. Review the result, then save.
 
 ## Refiling and archiving
 

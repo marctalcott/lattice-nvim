@@ -864,7 +864,7 @@ function M.jump()
   end
   if target.project then
     state.view = "todo"
-    state.query = "project:" .. target.project
+    state.query = "project:" .. agenda.quote(target.project)
     paint()
     return
   end

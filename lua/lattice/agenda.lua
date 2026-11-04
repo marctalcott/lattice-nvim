@@ -7,7 +7,8 @@ local M = {}
 -- Filters ----------------------------------------------------------------------
 
 --- Parses a filter such as "+etna -later #A project:Krakatoa @elira
---- state:NEXT budget". Terms:
+--- state:NEXT budget". Double quotes keep spaces in a value:
+--- project:"Home Renovation", @"Elira Voss". Terms:
 ---   +tag / -tag     has / lacks the tag (own or inherited)
 ---   #A              has that priority (several: any of them)
 ---   project:Name    in that project (case-insensitive)
@@ -16,9 +17,36 @@ local M = {}
 ---   anything else   appears in the title (case-insensitive)
 --- @return { tags: string[], not_tags: string[], priorities: table, project: string|nil,
 ---   person: string|nil, states: table, words: string[] }
+-- Splits a filter into terms on spaces, keeping a double-quoted part
+-- together and dropping its quotes: project:"Home Renovation" is one term.
+local function terms(text)
+  local list, current, quoted, any = {}, {}, false, false
+  for char in (text or ""):gmatch(".") do
+    if char == '"' then
+      quoted, any = not quoted, true
+    elseif char:match("%s") and not quoted then
+      if #current > 0 or any then
+        list[#list + 1] = table.concat(current)
+      end
+      current, any = {}, false
+    else
+      current[#current + 1] = char
+    end
+  end
+  if #current > 0 or any then
+    list[#list + 1] = table.concat(current)
+  end
+  return list
+end
+
+--- Quotes a filter value when it contains spaces.
+function M.quote(value)
+  return value:find("%s") and ('"' .. value .. '"') or value
+end
+
 function M.parse_filter(text)
   local filter = { tags = {}, not_tags = {}, priorities = {}, states = {}, words = {} }
-  for term in (text or ""):gmatch("%S+") do
+  for _, term in ipairs(terms(text)) do
     local tag = term:match("^%+(.+)$")
     local not_tag = term:match("^%-(.+)$")
     local priority = term:match("^#(%w)$")
@@ -156,23 +184,35 @@ function M.week_start(date)
   return schedule.add_days(date, -((n + 3) % 7))
 end
 
+-- Rough length of one repeater step in days, to jump near a range
+-- instead of stepping from a timestamp that may be years old.
+local APPROX_DAYS = { h = 1 / 24, d = 1, w = 7, m = 30.4, y = 365.25 }
+
 -- Dates a timestamp falls on within [first, last]: the date itself, and
--- for a repeater every later occurrence (as Org's agenda shows repeats).
+-- for a repeater every later occurrence (as Org's agenda shows repeats),
+-- once per day even for hourly repeaters.
 local function occurrences(ts, first, last)
-  local dates = {}
-  local last_n = schedule.days(last)
-  local first_n = schedule.days(first)
-  local current = ts
-  local step = 0
-  while schedule.days(current.date) <= last_n and step < 1000 do
-    if schedule.days(current.date) >= first_n then
-      dates[#dates + 1] = current.date
-    end
-    if not ts.repeater then
+  local first_n, last_n = schedule.days(first), schedule.days(last)
+  local base_n = schedule.days(ts.date)
+  if not ts.repeater then
+    return (base_n >= first_n and base_n <= last_n) and { ts.date } or {}
+  end
+  local n, unit = ts.repeater.n, ts.repeater.unit
+  -- Start a little before the range: calendar months and years vary, so
+  -- the estimate is corrected by stepping.
+  local step = math.max(0, math.floor((first_n - base_n) / (n * APPROX_DAYS[unit])) - 2)
+  local dates, seen = {}, {}
+  for _ = 1, 400 do
+    local current = step == 0 and ts or schedule.shift(ts, n * step, unit)
+    local day = schedule.days(current.date)
+    if day > last_n then
       break
     end
+    if day >= first_n and not seen[current.date] then
+      seen[current.date] = true
+      dates[#dates + 1] = current.date
+    end
     step = step + 1
-    current = schedule.shift(ts, ts.repeater.n * step, ts.repeater.unit)
   end
   return dates
 end

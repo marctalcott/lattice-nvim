@@ -28,11 +28,20 @@ function M.available()
   return (pcall(vim.treesitter.language.add, "markdown"))
 end
 
--- Last line (1-based, inclusive) covered by a node. A node ending at
--- column 0 stops at the end of the previous line.
-local function last_line(node)
+-- Last line (1-based, inclusive) covered by a node. A node that ends at
+-- column 0, or inside the next line's leading indentation (a nested list
+-- item ends where its next sibling's marker starts), stops at the end of
+-- the previous line.
+local function last_line(node, lines)
   local _, _, er, ec = node:range()
-  return ec == 0 and er or er + 1
+  if ec == 0 then
+    return er
+  end
+  local next_line = lines and lines[er + 1]
+  if next_line and next_line:sub(1, ec):match("^%s*$") then
+    return er
+  end
+  return er + 1
 end
 
 local function heading_text(raw)
@@ -123,14 +132,14 @@ function M.parse(lines)
           line = sr + 1,
           level = HEADING_LEVEL[marker and marker:type()] or 1,
           text = heading_text(inline and node_text(inline)),
-          stop = last_line(node),
+          stop = last_line(node, lines),
           parent = heading,
         }
         heading = #result.headings
       end
     elseif kind == "list_item" then
       local sr, sc = node:range()
-      local entry = { line = sr + 1, stop = last_line(node), col = sc, parent = item, heading = heading }
+      local entry = { line = sr + 1, stop = last_line(node, lines), col = sc, parent = item, heading = heading }
       local text_node
       for child in node:iter_children() do
         local child_kind = child:type()
