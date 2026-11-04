@@ -268,7 +268,9 @@ function M.update_progress(lines, line, cfg)
     up = item.parent
   end
 
-  -- Headings: every heading containing the line, innermost first.
+  -- Headings: every heading containing the line, innermost first. Cookie
+  -- edits don't change task states, so one parse serves all of them.
+  local parsed_once
   for index = #structure.headings, 1, -1 do
     local heading = structure.headings[index]
     if heading.line <= line and heading.stop >= line then
@@ -280,8 +282,10 @@ function M.update_progress(lines, line, cfg)
       end
       local done, total = box_counts(top)
       if total == 0 then
-        -- Child TODO headings, as tasks.lua counts them.
-        local parsed = tasks.parse(lines, cfg or config.defaults())
+        -- Child TODO headings, as tasks.lua counts them. Parsed once, and
+        -- only if some heading needs it.
+        parsed_once = parsed_once or tasks.parse(lines, cfg or config.defaults()) or { tasks = {} }
+        local parsed = parsed_once
         for _, task in ipairs(parsed and parsed.tasks or {}) do
           if task.kind == "heading" and task.parent then
             local parent = parsed.tasks[task.parent]
@@ -374,7 +378,7 @@ function M.set_state(lines, cfg, line, new, now)
     return nil, "put the cursor on a heading"
   end
   local prefix, old, rest = split_heading(lines[line], kws)
-  if rest == "" then
+  if not prefix or rest == "" then
     return nil, "this heading has no text"
   end
   new = new ~= "" and new or nil
@@ -393,14 +397,31 @@ function M.set_state(lines, cfg, line, new, now)
   local was_done = old ~= nil and kws.states[old] == "done"
   local done = new ~= nil and kws.states[new] == "done"
 
-  if done and not was_done and task then
-    if opts.enforce.checkboxes and task.progress and task.progress.of == "checkboxes" and task.progress.done < task.progress.total then
-      return nil, ("%d of %d checkboxes are unchecked (enforce.checkboxes)"):format(task.progress.total - task.progress.done, task.progress.total)
+  if done and not was_done then
+    -- From the structure, so a heading without a state is held to the same
+    -- rules as a task (Org checks any heading).
+    if opts.enforce.checkboxes then
+      local open, total = 0, 0
+      for _, item in ipairs(structure.items) do
+        if item.heading == index and not item.parent and item.checkbox then
+          total = total + 1
+          if item.checkbox ~= "x" and item.checkbox ~= "X" then
+            open = open + 1
+          end
+        end
+      end
+      if open > 0 then
+        return nil, ("%d of %d checkboxes are unchecked (enforce.checkboxes)"):format(open, total)
+      end
     end
     if opts.enforce.todo then
-      for _, child in ipairs(task.children) do
-        if not parsed.tasks[child].done and parsed.tasks[child].kind == "heading" then
-          return nil, ("subtask %q is still open (enforce.todo)"):format(parsed.tasks[child].title)
+      for _, child in ipairs(structure.headings) do
+        if child.parent == index then
+          for _, t in ipairs(parsed.tasks) do
+            if t.line == child.line and not t.done then
+              return nil, ("subtask %q is still open (enforce.todo)"):format(t.title)
+            end
+          end
         end
       end
     end
@@ -464,6 +485,9 @@ function M.shift_priority(lines, cfg, line, direction)
   local parsed = tasks.parse(lines, cfg)
   local kws = parsed and parsed.keywords_at[line] or cfg.keywords
   local prefix, state, rest = split_heading(lines[line], kws)
+  if not prefix or rest == "" then
+    return nil, "this heading has no text"
+  end
   local values = (cfg.priorities or {}).values or { "A", "B", "C" }
   local default = (cfg.priorities or {}).default or values[math.ceil(#values / 2)]
   local current, after = rest:match("^%[#(%w)%]%s*(.*)$")
@@ -493,12 +517,35 @@ local function date_stamp(date)
   return ("<%s %s>"):format(date, timestamp.weekday(tonumber(y), tonumber(m), tonumber(d)))
 end
 
+-- The workflow's first done state, for a finished v0.1 item whose own
+-- state is still active (`- [x] TODO x`).
+local function first_done(kws, state)
+  for _, cycle in ipairs(kws.cycles or {}) do
+    if vim.tbl_contains(cycle, state) then
+      for _, candidate in ipairs(cycle) do
+        if kws.states[candidate] == "done" then
+          return candidate
+        end
+      end
+    end
+  end
+  for _, cycle in ipairs(kws.cycles or {}) do
+    for _, candidate in ipairs(cycle) do
+      if kws.states[candidate] == "done" then
+        return candidate
+      end
+    end
+  end
+end
+
 --- Rewrites the note's Lattice v0.1 forms as Org (plan D3): each legacy
 --- item becomes a heading one level below its enclosing heading (deeper
 --- for nested ones), with `[due:]` as DEADLINE and `@Name` / `[promised:]`
---- as :ASSIGNED: / :PROMISED:; its sub-items stay below it as a list.
---- `[due:]` on headings becomes DEADLINE. Returns new lines and the number
---- of items converted.
+--- as :ASSIGNED: / :PROMISED:. A finished item (checked box or done state)
+--- gets a done state. The item's own sub-lines stay directly below its
+--- heading, before the headings of nested legacy items, so nothing changes
+--- owner. Invalid `[due:]` dates stay in the title. `[due:]` on headings
+--- becomes DEADLINE. Returns new lines and the number of items converted.
 function M.migrate(lines, cfg)
   local parsed, err = tasks.parse(lines, cfg)
   if not parsed then
@@ -509,99 +556,129 @@ function M.migrate(lines, cfg)
   for _, item in ipairs(structure.items) do
     item_at[item.line] = item
   end
+
+  local count = 0
+  local children = {}
+  for index, task in ipairs(parsed.tasks) do
+    if task.kind == "item" and task.parent and parsed.tasks[task.parent].kind == "item" then
+      children[task.parent] = children[task.parent] or {}
+      table.insert(children[task.parent], index)
+    end
+  end
+
+  local function last_line(task)
+    local stop = task.source.end_line
+    while stop > task.line and vim.trim(lines[stop] or "") == "" do
+      stop = stop - 1
+    end
+    return stop
+  end
+
+  -- The Org lines for one legacy item and, recursively, its legacy children.
+  local function convert(index, level)
+    local task = parsed.tasks[index]
+    count = count + 1
+    local item = item_at[task.line]
+    local state = task.state
+    if task.done and parsed.keywords_at[task.line] then
+      local kws = parsed.keywords_at[task.line]
+      if kws.states[state] ~= "done" then
+        state = first_done(kws, state) or state
+      end
+    end
+    local block = { ("%s %s %s"):format(("#"):rep(math.min(level, 6)), state, task.title) }
+    if task.legacy.due then
+      block[#block + 1] = "DEADLINE: " .. date_stamp(task.legacy.due)
+    end
+    local props = {}
+    if task.legacy.assigned then
+      props[#props + 1] = ":ASSIGNED: " .. task.legacy.assigned
+    end
+    if task.legacy.promised then
+      props[#props + 1] = ":PROMISED: " .. task.legacy.promised
+    end
+    if #props > 0 then
+      block[#block + 1] = ":PROPERTIES:"
+      vim.list_extend(block, props)
+      block[#block + 1] = ":END:"
+    end
+    -- Continuation lines sit at the item's content column: just past its
+    -- marker and the spaces after it.
+    local marker = lines[task.line]:sub(item.col + 1):match("^([-*+]%s+)")
+      or lines[task.line]:sub(item.col + 1):match("^(%d+[.)]%s+)")
+      or "- "
+    local width = item.col + #marker
+    local skip = {}
+    for _, child in ipairs(children[index] or {}) do
+      local c = parsed.tasks[child]
+      for at = c.line, last_line(c) do
+        skip[at] = true
+      end
+    end
+    local own = {}
+    for at = task.line + 1, last_line(task) do
+      if not skip[at] then
+        local text = lines[at]
+        local lead = #text:match("^(%s*)")
+        own[#own + 1] = lead >= width and text:sub(width + 1) or vim.trim(text) == "" and "" or text:gsub("^%s+", "")
+      end
+    end
+    while #own > 0 and vim.trim(own[#own]) == "" do
+      table.remove(own)
+    end
+    vim.list_extend(block, own)
+    for _, child in ipairs(children[index] or {}) do
+      block[#block + 1] = ""
+      vim.list_extend(block, convert(child, level + 1))
+    end
+    return block
+  end
+
+  -- Top-level legacy items and legacy-dated headings, bottom-up so earlier
+  -- line numbers stay valid.
   local work = {}
-  for _, task in ipairs(parsed.tasks) do
-    if task.kind == "item" or (task.kind == "heading" and task.legacy.due) then
-      work[#work + 1] = task
+  for index, task in ipairs(parsed.tasks) do
+    local nested = task.kind == "item" and task.parent and parsed.tasks[task.parent].kind == "item"
+    if (task.kind == "item" and not nested) or (task.kind == "heading" and task.legacy.due) then
+      work[#work + 1] = index
     end
   end
   if #work == 0 then
     return lines, 0
   end
   table.sort(work, function(a, b)
-    return a.line > b.line
+    return parsed.tasks[a].line > parsed.tasks[b].line
   end)
-  local stops = {}
-  for _, task in ipairs(work) do
-    stops[task] = task.source.end_line
-  end
 
   local out = copy(lines)
-  for n, task in ipairs(work) do
+  for _, index in ipairs(work) do
+    local task = parsed.tasks[index]
     if task.kind == "heading" then
-      out[task.line] = out[task.line]:gsub("[ \t]*%[due:[^%]]*%]", "", 1)
+      count = count + 1
+      out[task.line] = out[task.line]:gsub("[ \t]*%[due:%d%d%d%d%-%d%d%-%d%d%]", "", 1)
       if not task.deadline then
         out = assert(M.set_planning(out, task.line, "DEADLINE", date_stamp(task.legacy.due)))
       end
     else
       local item = item_at[task.line]
       local base = item.heading and structure.headings[item.heading].level or 1
-      local depth = 0
-      local up = task.parent
-      while up and parsed.tasks[up].kind == "item" do
-        depth = depth + 1
-        up = parsed.tasks[up].parent
-      end
-      local level = math.min(6, base + 1 + depth)
-      local block = { ("%s %s %s"):format(("#"):rep(level), task.state, task.title) }
-      if task.legacy.due then
-        block[#block + 1] = "DEADLINE: " .. date_stamp(task.legacy.due)
-      end
-      local props = {}
-      if task.legacy.assigned then
-        props[#props + 1] = ":ASSIGNED: " .. task.legacy.assigned
-      end
-      if task.legacy.promised then
-        props[#props + 1] = ":PROMISED: " .. task.legacy.promised
-      end
-      if #props > 0 then
-        block[#block + 1] = ":PROPERTIES:"
-        vim.list_extend(block, props)
-        block[#block + 1] = ":END:"
-      end
-      -- The item's own sub-lines, dedented to the new heading's entry.
-      local stop = stops[task]
-      while stop > task.line and vim.trim(out[stop] or "") == "" do
-        stop = stop - 1
-      end
-      -- Continuation lines sit at the item's content column: just past
-      -- its marker and the spaces after it.
-      local marker = out[task.line]:sub(item.col + 1):match("^([-*+]%s+)")
-        or out[task.line]:sub(item.col + 1):match("^(%d+[.)]%s+)")
-        or "- "
-      local width = item.col + #marker
-      local body = {}
-      for at = task.line + 1, stop do
-        local text = out[at]
-        local lead = #text:match("^(%s*)")
-        body[#body + 1] = lead >= width and text:sub(width + 1) or vim.trim(text) == "" and "" or text:gsub("^%s+", "")
-      end
-      if #body > 0 then
-        vim.list_extend(block, body)
-      end
+      local block = convert(index, base + 1)
+      local stop = last_line(task)
       if task.line > 1 and vim.trim(out[task.line - 1]) ~= "" then
         table.insert(block, 1, "")
       end
       if out[stop + 1] ~= nil and vim.trim(out[stop + 1]) ~= "" then
         block[#block + 1] = ""
       end
-      local old_count = stop - task.line + 1
-      for _ = 1, old_count do
+      for _ = task.line, stop do
         table.remove(out, task.line)
       end
       for i = #block, 1, -1 do
         table.insert(out, task.line, block[i])
       end
-      local delta = #block - old_count
-      for later = n + 1, #work do
-        local outer = work[later]
-        if stops[outer] >= task.line then
-          stops[outer] = stops[outer] + delta
-        end
-      end
     end
   end
-  return out, #work
+  return out, count
 end
 
 -- Refile and archive (§14.2) -----------------------------------------------

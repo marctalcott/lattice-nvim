@@ -42,6 +42,24 @@ local function ordered_states(kws)
   return list
 end
 
+local function checked(box)
+  return box == "x" or box == "X"
+end
+
+--- The state `text` starts with (longest first, exact case), followed by
+--- whitespace or the end of the text, and the whitespace after it; nil if
+--- none. Unlike split_state, the title may be empty.
+function M.leading_state(text, kws)
+  for _, state in ipairs(ordered_states(kws)) do
+    if text:sub(1, #state) == state then
+      local gap = text:sub(#state + 1):match("^[ \t]*")
+      if gap ~= "" or #text == #state then
+        return state, gap
+      end
+    end
+  end
+end
+
 --- Splits "<STATE> <title>" when `text` starts with a declared state
 --- (exact case) followed by whitespace and a non-empty title.
 --- @return string|nil state
@@ -98,7 +116,11 @@ local function legacy_dates(text, waiting, bad)
         bad[#bad + 1] = { tag = tag, value = value }
       end
     end
-    text = vim.trim((text:gsub("[ \t]*%[" .. tag .. ":[^%]]*%][ \t]*", " ")))
+    -- Only valid dates leave the text: an invalid one stays visible (and in
+    -- WARNINGS), so nothing the user typed is lost, e.g. by :LatticeMigrate.
+    text = vim.trim((text:gsub("[ \t]*%[" .. tag .. ":([^%]]*)%][ \t]*", function(value)
+      return timestamp.valid_date(value) and " " or nil
+    end)))
   end
   return text, dates
 end
@@ -398,11 +420,13 @@ function M.parse(lines, cfg)
       local _, default_done = default_states(kws)
       if not state then
         legacy_waiting = true
-        state = node.checkbox and node.checkbox ~= " " and default_done or (kws.states.WAITING and "WAITING") or kws.first_open
+        state = checked(node.checkbox) and default_done or (kws.states.WAITING and "WAITING") or kws.first_open
       end
       task.state = state
       -- v0.1: a checked box or a done state means done.
-      task.done = (node.checkbox ~= nil and node.checkbox ~= " ") or kws.states[state] == "done"
+      -- v0.1: a checked box or a done state means done. Org's partly
+      -- checked [-] is not checked.
+      task.done = checked(node.checkbox) or kws.states[state] == "done"
       result.legacy[#result.legacy + 1] = { line = node.line, form = state == task.keyword and "TODO bullet" or "Waiting On item" }
     end
 

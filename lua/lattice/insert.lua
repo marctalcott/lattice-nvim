@@ -59,7 +59,7 @@ function M.check_visible(buf, line, cfg)
       return true
     end
   end
-  warn(("line %d was added, but Lattice won't list it: it is inside a code block (```). Move it out, or close the block if it is never closed."):format(line))
+  warn(("line %d was added, but Lattice won't list it as a task: it may be inside a code block (```) that is never closed. Move it out, or close the block."):format(line))
   return false
 end
 
@@ -86,7 +86,11 @@ function M.insert_heading(buf, state, text, cfg, cursor, drawer)
     end
   end
 
-  local kws = enclosing and parsed.keywords_at[enclosing.line] or parsed.keywords
+  -- The new heading is the enclosing heading's sibling, so it inherits
+  -- what that heading inherits (from its parent), not the heading's own
+  -- :WORKFLOW: or project.
+  local parent = enclosing and enclosing.parent and structure.headings[enclosing.parent]
+  local kws = parent and parsed.keywords_at[parent.line] or parsed.keywords
   if state == "first_open" then
     state = kws.first_open
     if not state then
@@ -174,8 +178,8 @@ function M.cycle_line(line, kws, direction)
   if not prefix then
     return nil, "put the cursor on a list item (- …) or a heading (# …)"
   end
-  local word, gap = text:match("^(%S+)([ \t]*)")
-  local current = word and kws.states[word] and word or nil
+  -- Longest state first, so "IN PROGRESS" is one state, not "IN".
+  local current, gap = tasks.leading_state(text, kws)
   local old = current and current .. gap or ""
   local rest = text:sub(#old + 1)
   local state = step(kws.cycles, current, direction)
@@ -632,6 +636,10 @@ function M.refile()
     if same then
       -- The target line may have moved if the note changed since the scan.
       local dest = choice.line and require("lattice.dashboard").locate(lines, { line = choice.line, title = choice.text })
+      if choice.line and not dest then
+        warn("the target heading changed since the list was made; nothing was moved. Try again.")
+        return
+      end
       local new_lines, err = mutate.refile(lines, row, nil, dest)
       if not new_lines then
         warn(err)
@@ -646,6 +654,10 @@ function M.refile()
     local dest_buf = mutate.note_buffer(choice.path)
     local dest_lines = vim.api.nvim_buf_get_lines(dest_buf, 0, -1, false)
     local dest = choice.line and require("lattice.dashboard").locate(dest_lines, { line = choice.line, title = choice.text })
+    if choice.line and not dest then
+      warn("the target heading changed since the list was made; nothing was moved. Try again.")
+      return
+    end
     local new_src, new_dest = mutate.refile(lines, row, dest_lines, dest)
     if not new_src then
       warn(new_dest)

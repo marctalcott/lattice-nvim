@@ -210,8 +210,9 @@ function M.scan(root, cfg)
       return result
     end
     if parsed then
-      -- Cached parses are shared between scans: hand out copies.
-      parsed = vim.deepcopy(parsed)
+      -- Cached parses are shared between scans, not copied: the fields set
+      -- below are the same every time, and callers treat results as
+      -- read-only (edits go through the mutation layer and a rescan).
       for _, heading in ipairs(parsed.headings or {}) do
         heading.rel, heading.path = rel, path
         result.outlines[#result.outlines + 1] = heading

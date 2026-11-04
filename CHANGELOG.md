@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed (code review of 0.2.0)
+
+- `:LatticeMigrate` gave a finished v0.1 item (`- [x] TODO x`) an open state; it now gets the workflow's done state.
+- `:LatticeMigrate` deleted invalid `[due:]` dates; they now stay in the title (and in WARNINGS). Invalid v0.1 dates are no longer stripped from titles anywhere.
+- `:LatticeMigrate` moved a parent item's own notes under a nested item's heading; they now stay directly under their own heading.
+- A nested list item was taken to end one line late, absorbing its next sibling (Tree-sitter ends it inside that line's indentation).
+- Refile to a heading that changed after the list was shown moved the subtree to the end of the note; it is now refused.
+- Cycling misread multi-word states such as `IN PROGRESS`.
+- `<leader>lt` used the enclosing heading's own `:WORKFLOW:` for its new sibling heading.
+- `enforce.todo` / `enforce.checkboxes` were skipped for headings without a state.
+- `Enter` on a project whose name has spaces listed nothing; filters now accept quoted values (`project:"Home Renovation"`, `@"Elira Voss"`).
+- The week agenda showed an hourly repeat many times a day and could drop repeats that started long ago; repeats now show once a day and are found directly.
+- A v0.1 item with Org's partly checked `[-]` counted as done.
+- Changing the state or priority of an empty heading (`##`) crashed.
+- Progress updates parse the note once instead of once per enclosing heading, and refreshes no longer copy every cached parse.
+
 ## 0.2.0 — 2026-11-03 — Org-mode for Markdown
 
 Implements [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2 with its Amendment 1 (strict Org); plan and decisions in [`specs/ORG_MARKDOWN_PLAN.md`](specs/ORG_MARKDOWN_PLAN.md) (#5–#10).
