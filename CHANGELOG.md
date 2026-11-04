@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.6 — 2026-11-04
 
-Bug fixes from a code review of 0.2.5. No new features or settings.
+Bug fixes from a code review of 0.2.5 (#22). No new features or settings.
 
 ### Fixed
 
