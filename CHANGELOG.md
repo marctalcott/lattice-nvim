@@ -40,6 +40,17 @@ Work toward [`specs/LATTICE_SYNTAX_SPEC.md`](specs/LATTICE_SYNTAX_SPEC.md) v0.2;
 
 - DUE SOON now uses deadline warning periods (default 14 days, Org's) instead of a fixed 7 days, and no longer includes today: deadlines due today are in TODAY.
 
+### Strict Org: only headings are tasks
+
+Spec Amendment 1 and plan decision D14: as in Org-mode, a Markdown checkbox is not a task.
+
+- Only headings that start with a state are tasks. Checkboxes (including Org's partly done `[-]`) are steps: each heading task gets `progress` from the top-level checkboxes directly in its entry, else from its child TODO headings, and a `[1/3]` / `[33%]` cookie in its title is recognized.
+- Planning lines, drawers, priorities and tags are read for headings only, as in Org. `:PRIORITY:` and `:STATE:` drawer entries set nothing.
+- `<leader>lt` adds `## TODO <task>` (Org's `C-S-RET`: the current heading's level, after its subtree) instead of a `- TODO` bullet. `<leader>ld` adds `## WAITING <task>` with an `:ASSIGNED:` drawer instead of a `Waiting On` bullet, and the name may be several words.
+- `<leader>ln` / `<leader>lp` work on headings; a plain list item never gains a state.
+- Lattice v0.1 list forms (`- TODO x`, `Waiting On` bullets) are still read with v0.1 rules, and counted as legacy in `:LatticeHealth`.
+- `examples/sample-notes.md` uses headings for every task.
+
 ## 0.1.0 — 2026-11-03
 
 First release: Milestone 1 of [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md), plus org-style TODO keyword sequences and state cycling. The sections below record how it got there.

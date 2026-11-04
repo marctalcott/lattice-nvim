@@ -51,27 +51,25 @@ setup({opts})
 3. NOTE FORMAT                                                 *lattice-format*
 
 Org-mode semantics, Markdown syntax. The full contract is
-specs/LATTICE_SYNTAX_SPEC.md in the repository.
+specs/LATTICE_SYNTAX_SPEC.md in the repository (see its Amendment 1).
 >markdown
     # Etna :engineering:
 
-    ## IN PROGRESS [#A] Review system architecture :design:
+    ## IN PROGRESS [#A] Review system architecture [1/2] :design:
     DEADLINE: <2026-11-05 Thu>
     :PROPERTIES:
     :ID: etna-review-001
     :END:
     - [x] Collect requirements
     - [ ] Draft the proposal
-      SCHEDULED: <2026-11-03 Tue>
 <
                                                               *lattice-tasks*
-Tasks are:
-- headings (`#` to `######`) whose text starts with a state;
-- every checkbox item: `- [ ]`, `* [x]`, `+ [X]`, `1. [ ]`;
-- bullets that start with a state, `- TODO x` (Lattice v0.1 form).
-States match exactly. A state with no title, an empty checkbox, prose,
-code blocks and front matter are never tasks. Headings and checkboxes form
-one tree. Notes are read with Neovim's Tree-sitter Markdown parser.
+As in Org-mode, tasks are headings (`#` to `######`) whose text starts with
+a state. Checkboxes (`[ ]`, `[x]`, `[X]`, Org's partly done `[-]`) are
+steps: a heading's progress counts the top-level checkboxes directly in
+its entry, else its child TODO headings. They are not listed on the
+dashboard. States match exactly. Prose, code blocks and front matter are
+never tasks. Notes are read with Neovim's Tree-sitter Markdown parser.
 
                                                           *lattice-workflows*
 Workflows list active, then done states. Default: TODO NEXT WAITING, then
@@ -82,28 +80,24 @@ spaces. A task's project is an inherited `:PROJECT:`, front matter
 `project:`, or the top-level `#` heading when it names a configured
 workflow; most notes have none.
 
-A checkbox's state is its `:STATE:` property, else the workflow's first
-active state (`[ ]`) or first done state (`[x]`). The box decides whether
-it is finished; a box that disagrees with its state is a warning.
-
                                                            *lattice-metadata*
-Metadata goes directly below the title (inside the list item for a
-checkbox):
+Metadata belongs to headings and goes directly below them (blank lines
+in between, as Markdown formatters add, are allowed):
 - `SCHEDULED: <2026-11-05 Thu>`, `DEADLINE: <2026-11-09 Mon -3d>`,
   `CLOSED: [2026-11-09 Mon 14:30]`, with repeaters `+1w`, `++1m`, `.+1d`.
   Repeaters follow Org: `+` one interval from the date, `++` until the
   date is in the future, `.+` from the completion date. Months overflow
   like Org (Jan 31 +1m is Mar 3).
-- Priority: `## TODO [#A] Title`, or `:PRIORITY: A` on a checkbox.
-- Tags: `## TODO Title :a:b:`, or `:TAGS: a b` on a checkbox. Tags inherit
-  from enclosing headings (`inherit.tags`).
+- Priority: `## TODO [#A] Title` (a :PRIORITY: property sets nothing).
+- Tags: `## TODO Title :a:b:`. Tags inherit from enclosing headings
+  (`inherit.tags`).
 - `:PROPERTIES:` drawers with any names; `:ASSIGNED:` is the person shown.
 Problems (bad timestamps or weekdays, malformed drawers, unknown states,
 priorities or workflows, duplicate IDs) are warnings; nothing is rewritten.
 
                                                             *lattice-waiting*
-Lattice v0.1 syntax still reads: bullets under a `Waiting On` heading are
-waiting items, a leading `@Name` is the assignee, `[due:YYYY-MM-DD]` is
+Lattice v0.1 syntax still reads: bullets with a state (`- TODO x`) are
+items in that state, bullets under a `Waiting On` heading are waiting items, a leading `@Name` is the assignee, `[due:YYYY-MM-DD]` is
 the date (a DEADLINE wins), `[promised:YYYY-MM-DD]` is shown. Invalid
 dates are listed under WARNINGS. |:LatticeHealth| counts v0.1 forms.
 
@@ -129,35 +123,32 @@ Lattice reads saved files. Save a note, then refresh.
 ==============================================================================
 5. ADDING TASKS                                                *lattice-insert*
 
-|:LatticeAddTodo| asks for text and adds `- TODO <text>` on the line below
-the cursor, using the note's first open keyword (front matter, else root).
-On a list item it matches the item's indent and goes after its
-sub-bullets. Inside a Waiting On section the item counts as waiting. |:LatticeAddWaiting| asks for
-an optional one-word name, then text, and adds `- [ ] @Name <text>` under
-`Waiting On`:
+|:LatticeAddTodo| asks for text and adds `## TODO <text>`, like Org's
+C-S-RET: at the level of the heading the cursor is in, after its subtree
+(a level-2 heading below the cursor when there is none). The state is the
+first active state of the workflow in effect there.
 
-- The Waiting On item goes after the section's last non-blank line.
-- With several matching sections: the one containing the cursor, else the
-  nearest one above the cursor, else the first.
-- With none: Lattice asks before adding `## Waiting On` at the end.
-- Cancelling any prompt leaves the buffer unchanged. The buffer is never
-  saved for you.
-- If an item lands inside a code block, Lattice warns that it can't list it.
+|:LatticeAddWaiting| asks for an optional person, then text, and adds
+`## WAITING <text>` the same way, with `:ASSIGNED: <person>` in a drawer.
+It adds nothing if that workflow has no WAITING state.
+
+Blank lines go around the new heading. Cancelling a prompt changes
+nothing. The buffer is never saved for you. If the heading lands inside a
+code block, Lattice warns that it can't list it.
 
                                                                *lattice-cycle*
-|:LatticeNextState| and |:LatticePrevState| step the item under the cursor
-through its keyword sequence, like org's S-Right and S-Left. With
+|:LatticeNextState| and |:LatticePrevState| step the heading under the
+cursor through its workflow, like org's S-Right and S-Left. With
 `TODO NEXT | DONE CANCELED` the forward cycle is: no keyword, TODO, NEXT,
 DONE, CANCELED, no keyword.
 
-- Works on bullets (`-`, `*`, `+`, with or without a checkbox) and `#`
-  headings. The keyword goes after the marker and checkbox; the checkbox is
-  left alone.
-- Uses the note's sequences (front matter, else root). An item stays in the
-  sequence that holds its keyword; one without a keyword starts on the
-  first sequence.
-- Plain lines, numbered items, empty bullets, front matter and code blocks
-  are refused with a message, and nothing changes.
+- Works on `#` headings; priority, tags and closing #s are kept.
+- Uses the workflow in effect on that line. A heading stays in the
+  sequence that holds its state; one without a state starts on the first.
+- List items aren't tasks in Org and never gain a state; a v0.1 keyword
+  bullet can still change or drop its state.
+- Plain lines, front matter and code blocks are refused with a message,
+  and nothing changes.
 - One undo step. The buffer is not saved.
 
 ==============================================================================
@@ -168,9 +159,9 @@ DONE, CANCELED, no keyword.
                                                              *:LatticeRefresh*
 :LatticeRefresh     Rescan notes and .lattice.json.       (<leader>lr)
                                                              *:LatticeAddTodo*
-:LatticeAddTodo     Add a TODO item below the cursor.     (<leader>lt)
+:LatticeAddTodo     Add a ## TODO heading.                (<leader>lt)
                                                           *:LatticeAddWaiting*
-:LatticeAddWaiting  Add a Waiting On item.                (<leader>ld)
+:LatticeAddWaiting  Add a ## WAITING heading.             (<leader>ld)
                                                            *:LatticeNextState*
 :LatticeNextState   Next state of the item under cursor.  (<leader>ln)
                                                            *:LatticePrevState*

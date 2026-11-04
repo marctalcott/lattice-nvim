@@ -46,35 +46,36 @@ Lattice follows Org-mode's task model in ordinary Markdown: *Org-mode semantics,
 ```markdown
 # Etna :engineering:
 
-## IN PROGRESS [#A] Review system architecture :design:
+## IN PROGRESS [#A] Review system architecture [1/2] :design:
 DEADLINE: <2026-11-05 Thu>
 :PROPERTIES:
 :ID: etna-review-001
 :END:
 - [x] Collect requirements
 - [ ] Draft the proposal
-  SCHEDULED: <2026-10-30 Fri>
 
 # Team
 
-- [ ] Reply about the offsite venue
-  :PROPERTIES:
-  :STATE: WAITING
-  :ASSIGNED: Elira Voss
-  :END:
+## WAITING Reply about the offsite venue
+:PROPERTIES:
+:ASSIGNED: Elira Voss
+:END:
 ```
 
 ### Tasks
 
+As in Org-mode, **tasks are headings** that start with a state. Checkboxes are steps inside a task, not tasks themselves.
+
 | You write | Lattice reads | Org compatibility |
 |-----------|---------------|-------------------|
-| `## TODO Title` (any `#` level) | Heading task. A heading without a state is just a heading. | Adapted (`#` for `*`) |
-| `- [ ] Title`, `* [ ]`, `+ [ ]`, `1. [ ]` | Checkbox task: `[ ]` open, `[x]` / `[X]` done. **Every checkbox is a task.** | Extended |
-| `- TODO Title` (no box) | Task in that state | Extended (Lattice v0.1 syntax) |
-| `- [ ] WAITING Title` | Checkbox task in that state | Extended |
+| `## TODO Title` (any `#` level) | A task. A heading without a state is just a heading. | Adapted (`#` for `*`) |
+| `- [ ] Step`, `- [x]`, `- [X]`, `- [-]` under a task heading | A step: counted toward the heading's progress (`[1/2]`), not listed on the dashboard. `[-]` is Org's partly done. | Direct |
+| `- [ ] Step` anywhere else | An ordinary checklist item | Direct |
+| `- TODO Title` (a bullet with a state) | A Lattice v0.1 item, still read; see [below](#lattice-v01-syntax) | Legacy |
 
-- A heading's subtree runs to the next heading of the same or a higher level. Checkbox children follow list nesting, whatever the indent width. Headings and checkboxes form one tree: a checkbox under `## TODO Plan` is that task's child.
-- States match exactly, as in Org: `TODO` is a state; `todo`, `TODO:` and `TODOs` are not. A state with no title after it is not a task, and neither is an empty checkbox.
+- A heading's subtree runs to the next heading of the same or a higher level, and child headings are subtasks.
+- **Progress**, as Org counts it: the top-level checkboxes of the lists directly under a heading, or, if it has none, its direct child TODO headings. A `[1/3]` or `[33%]` cookie in the title shows it; keeping the cookie updated comes with the editing commands.
+- States match exactly, as in Org: `TODO` is a state; `todo`, `TODO:` and `TODOs` are not. A state with no title after it is not a task.
 - Prose, and anything in a fenced or indented code block, is never a task. Front matter is never a task.
 - Tasks are found with Neovim's built-in Tree-sitter Markdown parser. Windows line endings and a UTF-8 BOM are handled.
 
@@ -91,22 +92,21 @@ A workflow lists active states, then done states (Org's `TODO | DONE`). The defa
 
 - **Which workflow applies:** a `:WORKFLOW:` property (inherited), else the task's project's workflow, else the note's front matter `todo:` (v0.1), else `default`. States may contain spaces (`IN PROGRESS`).
 - **Projects are optional.** A task's project is an inherited `:PROJECT:` property, or `project:` in front matter, or the top-level `#` heading when its text names a configured workflow: `# Etna` is the Etna project above, but `# Meeting notes` is not a project.
-- **Checkbox states:** `:STATE:` in the item's drawer sets the state. Without one, `[ ]` is the workflow's first active state and `[x]` its first done state. The box always decides whether the item is finished; a box that disagrees with its state (`- [x] TODO …`) is listed as a warning, and Lattice never changes either.
-- A state Lattice doesn't know (`:STATE: PONDERING`, or `## BACKLOG …` outside the etna workflow) is a warning and never counts as done.
+- A heading that starts with a state from a different workflow (`## BACKLOG …` outside the etna workflow) is a warning, and is not a task.
 
 ### Metadata
 
-Metadata goes directly below the title: below a heading, or inside a list item, indented with it. Reading stops at the first other line, so look-alike text further down is ignored.
+As in Org, metadata belongs to headings and goes directly below them. Blank lines in between are fine, because Markdown formatters add one after every heading. Reading stops at the first other line, so look-alike text further down, or inside a list item, is ignored.
 
 | Metadata | Example | Org compatibility |
 |----------|---------|-------------------|
-| Planning | `SCHEDULED: <2026-11-05 Thu>`, `DEADLINE: <2026-11-09 Mon -3d>`, `CLOSED: [2026-11-09 Mon 14:30]` | Direct (Extended on checkboxes) |
-| Priority | `## TODO [#A] Title`; on a checkbox, `:PRIORITY: A` | Direct / Extended |
-| Tags | `## TODO Title :etna:design:`; on a checkbox, `:TAGS: etna design` | Direct / Extended |
-| Properties | `:PROPERTIES:` … `:NAME: value` … `:END:` (any names; `:NAME+:` appends) | Direct (Extended on checkboxes) |
+| Planning | `SCHEDULED: <2026-11-05 Thu>`, `DEADLINE: <2026-11-09 Mon -3d>`, `CLOSED: [2026-11-09 Mon 14:30]` | Direct |
+| Priority | `## TODO [#A] Title` (a `:PRIORITY:` property sets nothing, as in Org) | Direct |
+| Tags | `## TODO Title :etna:design:` | Direct |
+| Properties | `:PROPERTIES:` … `:NAME: value` … `:END:` (any names; `:NAME+:` appends) | Direct |
 
 - Tags inherit from enclosing headings and tasks (`inherit.tags`). `:PROJECT:` and `:WORKFLOW:` always inherit; other properties inherit when listed in `inherit.properties`.
-- `:ASSIGNED:` names the person shown on a row. `:STATE: WAITING` puts a task in WAITING ON.
+- `:ASSIGNED:` names the person shown on a row. A task in the `WAITING` state is in WAITING ON, as in Org.
 - The dashboard's date column shows the `DEADLINE` and, after it, `sched` and the `SCHEDULED` date. See [Dashboard](#dashboard) for how they place a task in OVERDUE, TODAY and DUE SOON.
 - Repeaters follow Org exactly: `+1w` moves one interval from the current date (and can stay in the past if you're late), `++1w` moves whole intervals until the date is in the future, `.+1w` moves one interval from the day you complete it. Units are `h`, `d`, `w`, `m`, `y`. Month and year steps keep the day number and overflow like Org does, so Jan 31 `+1m` is Mar 3 (Mar 2 in a leap year). Lattice computes the next occurrence now; completing a task to apply it comes with the editing commands.
 - Problems are warnings, never silent fixes: invalid timestamps, a weekday that doesn't match its date, malformed drawers, unknown priorities, states or workflows, and duplicate `:ID:`s (within a note or across notes).
@@ -117,13 +117,14 @@ Notes written for Lattice 0.1 keep working, and `:LatticeHealth` counts what sti
 
 | v0.1 form | Read as |
 |-----------|---------|
+| Bullets with a state, `- TODO x` or `- [ ] NEXT x` | Items in that state; a checked box or a done state means done |
 | Bullets under a `## Waiting On` heading | Waiting items (state `WAITING` when they have none) |
 | `@Name` at the start of a waiting item | `:ASSIGNED: Name` |
 | `[due:YYYY-MM-DD]` | The task's date, like `DEADLINE` (a real `DEADLINE` wins) |
 | `[promised:YYYY-MM-DD]` | `:PROMISED:` |
 | Front matter `todo: TODO NEXT \| DONE` | That note's workflow |
 
-A command to convert a note to the Org forms is planned.
+These items take no Org metadata (planning lines, drawers, tags). Lattice never writes them: its commands add headings. A command to convert a note to the Org forms is planned.
 
 ## Dashboard
 
@@ -137,7 +138,7 @@ A command to convert a note to the Org forms is planned.
 - **OVERDUE** lists open tasks whose deadline (or v0.1 `[due:]`) is before today, oldest first.
 - **TODAY** is Org's daily agenda: open tasks scheduled for today, or scheduled earlier and still open (Org keeps showing those until they're done), and deadlines due today. A `SCHEDULED` delay such as `-2d` keeps a task off it for that many days after its date.
 - **DUE SOON** lists open tasks whose deadline is after today but inside its warning period: the deadline's own `-3d` / `-1w`, else `deadlines.warning_days` (default 14, as in Org). Soonest first.
-- **DONE** lists finished tasks (a done state, or a checked box), from the most recently modified note first. It shows the 20 most recent and a count of the rest.
+- **DONE** lists finished tasks (headings in a done state, and v0.1 items that are done), from the most recently modified note first. It shows the 20 most recent and a count of the rest.
 - A task can appear both in its owner group and in a date group. Each group's count covers only that group.
 - **INBOX** appears only if the inbox folder exists. See [Capture inbox](#capture-inbox).
 - **WARNINGS** appears when a file couldn't be read or a note has a problem Lattice found (see [Metadata](#metadata)). `Enter` on a warning opens the note at that line.
@@ -152,29 +153,37 @@ A command to convert a note to the Org forms is planned.
 
 ## Adding tasks
 
-Run these from a Markdown note. They edit only that buffer and never save it.
+Run these from a Markdown note. They edit only that buffer and never save it. Both add Org headings.
 
-- `<leader>lt` or `:LatticeAddTodo` asks for the task and adds `- TODO <task>` on the line below the cursor. It uses the first active state of the note's workflow: its front matter `todo:` if set, else the default workflow. On a list item, the new item matches that item's indent and goes after its sub-bullets, so they stay with their own item. If the cursor is in the front matter, the item goes just below it. Inside a `Waiting On` section the new item counts as a waiting item, like any keyword item there, so move the cursor out of the section first to add one of your own.
-- `<leader>ld` or `:LatticeAddWaiting` asks for a name (optional; press Enter to skip), then the task. It adds `- [ ] @Name <task>`, or `- [ ] <task>` if you skipped the name, under `Waiting On`:
-  - The item goes after the last non-blank line of the section, below any existing items and their sub-bullets.
-  - If the note has more than one `Waiting On` section, Lattice uses the one containing the cursor. If the cursor isn't inside one, it uses the nearest section above the cursor, or the first section if there are none above.
-  - If the note has no `Waiting On` section, Lattice asks before adding `## Waiting On` at the end. Answer No, or cancel any prompt with `Esc`, and the buffer stays exactly as it was.
-- If a new item lands inside a code block, for example one that is never closed, Lattice can't list it and warns you.
+- `<leader>lt` or `:LatticeAddTodo` asks for the task and adds `## TODO <task>`, like Org's `C-S-RET`: at the level of the heading the cursor is in, after that heading's subtree. With no heading above the cursor, it adds a level-2 heading on the line below (after any front matter). It uses the first active state of the workflow in effect there (project, `:WORKFLOW:`, front matter `todo:`, or default), so under `# Etna` it adds `## BACKLOG <task>`.
+- `<leader>ld` or `:LatticeAddWaiting` asks who you're waiting on (optional; press Enter to skip), then what for. It adds `## WAITING <task>` in the same place, with the person in a drawer:
+
+  ```markdown
+  ## WAITING Venue reply
+  :PROPERTIES:
+  :ASSIGNED: Elira Voss
+  :END:
+  ```
+
+  If the workflow there has no `WAITING` state, it adds nothing and says so.
+- Blank lines are added around the new heading, as Markdown linters expect. Cancel any prompt with `Esc` and the buffer stays exactly as it was.
+- If the new heading lands inside a code block, for example one that is never closed, Lattice can't list it and warns you.
 
 ## Changing an item's state
 
-Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<leader>lp` (`:LatticePrevState`) step the item under the cursor through its keyword sequence. With `TODO NEXT | DONE CANCELED`:
+Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<leader>lp` (`:LatticePrevState`) step the heading under the cursor through its workflow. With `TODO NEXT | DONE CANCELED`:
 
 ```
-- Write docs  →  - TODO Write docs  →  - NEXT Write docs  →  - DONE Write docs  →  - CANCELED Write docs  →  - Write docs
+## Write docs  →  ## TODO Write docs  →  ## NEXT Write docs  →  ## DONE Write docs  →  ## CANCELED Write docs  →  ## Write docs
 ```
 
 `<leader>lp` goes the other way. The details:
 
-- It works on bullets (`-`, `*`, `+`, with or without a checkbox) and `#` headings. The keyword goes after the marker and any checkbox: `- [ ] TODO Write docs`. The checkbox itself is left alone.
-- It uses the workflow in effect on that line: a `:WORKFLOW:` property, the project's workflow, the note's front matter `todo:`, or the default. An item stays within the sequence that holds its keyword, so `BUG` steps to `FIXED` and then back to no keyword. An item with no keyword starts on the first sequence.
-- On a plain line, a numbered item, an empty bullet, the front matter, or a line inside a code block, it changes nothing and says why.
-- It edits only the buffer, as one undo step. Save the note and refresh the dashboard to see the change there.
+- It works on `#` headings. Priority, tags and closing `#`s stay as they are.
+- It uses the workflow in effect on that line: a `:WORKFLOW:` property, the project's workflow, the note's front matter `todo:`, or the default. A heading stays within the sequence that holds its state, so `BUG` steps to `FIXED` and then back to no state. A heading with no state starts on the first sequence.
+- List items aren't tasks in Org, so it won't give one a state. A Lattice v0.1 keyword bullet (`- TODO x`) can still change or drop its state.
+- On a plain line, the front matter, or a line inside a code block, it changes nothing and says why.
+- It edits only the buffer, as one undo step. It doesn't yet add `CLOSED` or advance repeaters; that comes with the editing commands.
 
 ## Commands and keymaps
 
@@ -182,10 +191,10 @@ Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<l
 |----------------------|--------------|---------------------------------------------------------|
 | `:Lattice`           | `<leader>ll` | Open or focus the dashboard                             |
 | `:LatticeRefresh`    | `<leader>lr` | Rescan notes and reread `.lattice.json`                 |
-| `:LatticeAddTodo`    | `<leader>lt` | Add a `TODO` item below the cursor                      |
-| `:LatticeAddWaiting` | `<leader>ld` | Add an item under `Waiting On` in the current note      |
-| `:LatticeNextState`  | `<leader>ln` | Move the item under the cursor to its next state        |
-| `:LatticePrevState`  | `<leader>lp` | Move the item under the cursor to its previous state    |
+| `:LatticeAddTodo`    | `<leader>lt` | Add a `## TODO` heading                                 |
+| `:LatticeAddWaiting` | `<leader>ld` | Add a `## WAITING` heading with `:ASSIGNED:`            |
+| `:LatticeNextState`  | `<leader>ln` | Move the heading under the cursor to its next state     |
+| `:LatticePrevState`  | `<leader>lp` | Move the heading under the cursor to its previous state |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
 Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state` and `health`.
@@ -284,7 +293,7 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 - **Saved files only.** Lattice reads files from disk. A task you add or check off appears on the dashboard after you save the note and refresh.
 - **Manual refresh.** There is no file watching or background indexing. The dashboard and its line numbers reflect the last scan.
 - **Whole-tree scan.** Every refresh rescans all included notes synchronously. This is fast for typical note collections but not optimized for very large trees.
-- **Org subset, in progress.** Tasks, workflows, priorities, tags, properties, planning lines and the scheduling engine are done (milestones A–C of the spec). Editing commands that complete tasks (advancing repeaters, adding `CLOSED`), keep checkboxes, `:STATE:` and progress cookies in sync come next, then a fuller agenda with project and priority filters. Until then `<leader>ln` / `<leader>lp` change the state word on the line only.
+- **Org subset, in progress.** Tasks, workflows, priorities, tags, properties, planning lines and the scheduling engine are done (milestones A–C of the spec). Editing commands that complete tasks (advancing repeaters, adding `CLOSED`) and keep parent checkboxes and progress cookies up to date come next, then a fuller agenda with project and priority filters. Until then `<leader>ln` / `<leader>lp` change the state word on the line only.
 - **Tree-sitter.** Lattice needs Neovim's Markdown parser, which ships with Neovim. A broken parser binary can crash Neovim when it loads; see [Troubleshooting](#troubleshooting).
 - **Symlinks** are skipped entirely (see above).
 - **Not yet built:** WBR preparation, AI-assisted commitment discovery, Portico publishing, and automated Drafts import are planned for later milestones (see [`specs/LATTICE_SPEC.md`](specs/LATTICE_SPEC.md) §11). The dashboard doesn't show or pretend to support them.
@@ -309,7 +318,7 @@ Common problems:
 | "Notes root is not set"                   | Add `root` to `opts`, or pass it to `setup()`.                                              |
 | "Notes root … is not a directory"         | Check the path. `~` is expanded, and relative paths are resolved from Neovim's current directory. |
 | "Invalid JSON" / "Invalid config"         | Fix `.lattice.json` as the message describes, then press `r`.                                |
-| A task is missing                         | Check that a heading or bullet starts with a state of its workflow, in the right case (`:LatticeHealth` lists the workflows), or that it's a checkbox with text; that it's outside code blocks, that the file is saved, and that it isn't excluded. Then refresh. |
+| A task is missing                         | Check that it's a heading that starts with a state of its workflow, in the right case (`:LatticeHealth` lists the workflows) — checkboxes are steps, not tasks; that it's outside code blocks, that the file is saved, and that it isn't excluded. Then refresh. |
 | A whole folder is missing                 | It may be excluded, a symlink, or unreadable. `:LatticeHealth` lists unreadable paths.       |
 | `Enter` warns that a file "no longer exists" | The note was moved or deleted since the last scan. Press `r`.                            |
 | Neovim quits ("KILL") when opening or scanning Markdown | A Tree-sitter parser binary is broken (on macOS, often `markdown.so` replaced in place). Delete it, for example `rm -rf ~/.local/share/nvim/lazy/nvim-treesitter/parser ~/.local/share/nvim/site/parser`, then run `:TSUpdate` from a fresh Neovim. |

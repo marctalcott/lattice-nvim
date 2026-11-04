@@ -9,6 +9,19 @@
 
 ---
 
+## Amendment 1 — Strict Org checkbox semantics (2026-11-03, product owner)
+
+Following §2.1 priority 1 ("follow documented Emacs Org-mode behavior"), the product owner chose Org's model for checkboxes over the Extended model in §3.2–§3.4. Where this amendment and the sections below differ, the amendment wins.
+
+1. **Only headings are tasks** (§3.1, Adapted). A Markdown checkbox is not a task: it has no workflow state, does not appear on the dashboard or agenda, and carries no planning lines, priority, tags or properties. §3.2–§3.4, the checkbox parts of §3.5, §5, §6.2 and §12 (`kind = "checkbox"`), the §15.2 fixture (now a heading), and acceptance test PAR-015 do not apply.
+2. **Checkboxes are steps** (§11.4, Direct). `[ ]`, `[x]`/`[X]` and Org's partly-done `[-]` feed a heading's progress cookie (`[1/3]`, `[33%]`): the top-level checkboxes of the lists directly in its entry (Org's `org-checkbox-hierarchical-statistics`), else its direct child TODO headings (`org-hierarchical-todo-statistics`). A cookie on a list item counts that item's direct child checkboxes.
+3. **Parent checkboxes** (§11.5) follow Org: checking every child checks the parent box, a partly checked set gives `[-]`. Heading states never change because of their checkboxes; an optional Org-style rule (`org-enforce-todo-checkbox-dependencies`) may block completing a heading while its boxes are unchecked.
+4. **Org's `:PRIORITY:` and `:STATE:`** are not set from drawers: priority is the heading's `[#A]` cookie, and the state is the heading's keyword.
+5. **Lattice v0.1 forms** — keyword bullets (`- TODO x`) and bullets under a `Waiting On` heading — are read as legacy items until a note is migrated, so existing notes keep working. They follow v0.1 rules and take no Org metadata. Lattice never writes them: `<leader>lt` and `<leader>ld` insert headings (`## TODO x`, `## WAITING x` with `:ASSIGNED:`).
+6. Compatibility table (§2.2): "Scheduling on Markdown checkboxes" is **Unsupported**, as in Org.
+
+---
+
 ## 1. Purpose
 
 This specification defines how Lattice recognizes, interprets, and modifies tasks stored in Markdown files.

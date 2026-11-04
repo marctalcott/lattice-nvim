@@ -55,42 +55,48 @@ test("§15.1 heading fixture", function()
   eq(r.diagnostics, {})
 end)
 
-test("§15.2 checkbox fixture", function()
+test("§15.2 fixture under strict Org: the task is a heading; a checkbox with a drawer is not", function()
   local r = parse(table.concat({
     "# Krakatoa",
-    "- [ ] Review release checklist",
-    "  SCHEDULED: <2026-11-06 Fri>",
-    "  :PROPERTIES:",
-    "  :STATE: REVIEW",
-    "  :ASSIGNED: Elira Voss",
-    "  :END:",
+    "## REVIEW Review release checklist",
+    "SCHEDULED: <2026-11-06 Fri>",
+    ":PROPERTIES:",
+    ":ASSIGNED: Elira Voss",
+    ":END:",
   }, "\n"))
   local t = r.tasks[1]
-  eq({ t.project, t.kind, t.state, t.done, t.workflow }, { "Krakatoa", "checkbox", "REVIEW", false, "krakatoa" })
+  eq({ t.project, t.kind, t.state, t.done, t.workflow }, { "Krakatoa", "heading", "REVIEW", false, "krakatoa" })
   eq({ t.scheduled.date, t.properties.ASSIGNED, t.person }, { "2026-11-06", "Elira Voss", "Elira Voss" })
   eq(r.diagnostics, {})
+  local boxed = parse("# Krakatoa\n- [ ] Review release checklist\n  SCHEDULED: <2026-11-06 Fri>\n  :PROPERTIES:\n  :STATE: REVIEW\n  :END:")
+  eq(#boxed.tasks, 0)
 end)
 
--- Planning (PAR-007, PAR-008) -------------------------------------------------
-
-test("PAR-007/008 planning lines on headings and checkboxes, several per line", function()
-  local r = parse("## TODO Plan\nSCHEDULED: <2026-11-05 Thu 09:30> DEADLINE: <2026-11-09 Mon -3d>\n- [ ] Item\n  DEADLINE: <2026-11-10 Tue +1w>")
+test("PAR-007/008 planning lines, several per line", function()
+  local r = parse("## TODO Plan\nSCHEDULED: <2026-11-05 Thu 09:30> DEADLINE: <2026-11-09 Mon -3d>\n## TODO Item\nDEADLINE: <2026-11-10 Tue +1w>")
   eq({ r.tasks[1].scheduled.time, r.tasks[1].deadline.warning }, { "09:30", { n = 3, unit = "d", first = false } })
   eq(r.tasks[2].deadline.repeater, { kind = "+", n = 1, unit = "w" })
   eq(r.tasks[2].recurrence, { kind = "+", n = 1, unit = "w" })
   eq(r.tasks[1].due, "2026-11-09") -- the dashboard's date
 end)
 
-test("metadata is read only directly below the title", function()
-  local r = parse("## TODO Plan\nSome prose.\nSCHEDULED: <2026-11-05 Thu>\n- [ ] Item\n\n  DEADLINE: <2026-11-09 Mon>")
-  eq({ r.tasks[1].scheduled, r.tasks[2].deadline }, { nil, nil })
+test("blank lines a Markdown formatter adds around headings don't detach metadata (Adapted)", function()
+  local r = parse("## WAITING Scorecards\n\n:PROPERTIES:\n:ASSIGNED: Elira Voss\n:END:\n\nSCHEDULED: <2026-11-05 Thu>\n\nBody text.")
+  eq({ r.tasks[1].person, r.tasks[1].scheduled.date }, { "Elira Voss", "2026-11-05" })
+  -- A blank line followed by prose ends the metadata as before.
+  local p = parse("## TODO A\n\nProse first.\n\nSCHEDULED: <2026-11-05 Thu>")
+  eq(p.tasks[1].scheduled, nil)
 end)
 
-test("metadata never attaches to a neighbouring or parent checkbox (§3.4)", function()
-  local r = parse("- [ ] Parent\n  - [ ] Child\n    SCHEDULED: <2026-11-05 Thu>\n- [ ] Next\n  DEADLINE: <2026-11-09 Mon>")
-  eq(vim.tbl_map(function(t)
-    return { t.title, t.scheduled and t.scheduled.date or "-", t.deadline and t.deadline.date or "-" }
-  end, r.tasks), { { "Parent", "-", "-" }, { "Child", "2026-11-05", "-" }, { "Next", "-", "2026-11-09" } })
+test("metadata is read only directly below the heading", function()
+  local r = parse("## TODO Plan\nSome prose.\nSCHEDULED: <2026-11-05 Thu>\n## TODO Next\n\nDEADLINE: <2026-11-09 Mon>")
+  -- Prose ends the metadata; a blank line alone does not (D15).
+  eq({ r.tasks[1].scheduled, r.tasks[2].deadline.date }, { nil, "2026-11-09" })
+end)
+
+test("planning inside a list item is not Org planning and never reaches the heading", function()
+  local r = parse("## TODO Parent\n- [ ] Child\n  SCHEDULED: <2026-11-05 Thu>\n  :PROPERTIES:\n  :X: 1\n  :END:")
+  eq({ r.tasks[1].scheduled, r.tasks[1].properties, r.diagnostics }, { nil, {}, {} })
 end)
 
 test("metadata inside fenced code is ignored", function()
@@ -120,11 +126,11 @@ end)
 
 -- Priorities (PAR-009) --------------------------------------------------------
 
-test("PAR-009 heading [#A] and checkbox :PRIORITY:", function()
-  local r = parse("## TODO [#A] Resolve\n## TODO [#B] Review\n- [ ] Configure\n  :PROPERTIES:\n  :PRIORITY: C\n  :END:\n## TODO Organize")
+test("PAR-009 priority is the heading's [#A] cookie, as in Org", function()
+  local r = parse("## TODO [#A] Resolve\n## TODO [#B] Review\n## TODO Organize\n:PROPERTIES:\n:PRIORITY: A\n:END:")
   eq(vim.tbl_map(function(t)
     return (t.priority or "-") .. " " .. t.title
-  end, r.tasks), { "A Resolve", "B Review", "C Configure", "- Organize" })
+  end, r.tasks), { "A Resolve", "B Review", "- Organize" })
 end)
 
 test("a priority outside the configured values is a diagnostic", function()
@@ -136,25 +142,22 @@ end)
 
 -- Tags (PAR-010, PAR-011) -----------------------------------------------------
 
-test("PAR-010 heading tags and checkbox :TAGS:", function()
-  local r = parse("## TODO Review deployment :etna:infrastructure:\n- [ ] Review\n  :PROPERTIES:\n  :TAGS: etna infrastructure\n  :END:")
-  eq(r.tasks[1].tags, { "etna", "infrastructure" })
-  eq(r.tasks[1].title, "Review deployment")
-  eq(r.tasks[2].tags, { "etna", "infrastructure" })
+test("PAR-010 heading tags", function()
+  local r = parse("## TODO Review deployment :etna:infrastructure:\n## TODO Only tags here :a:")
+  eq({ r.tasks[1].tags, r.tasks[1].title }, { { "etna", "infrastructure" }, "Review deployment" })
+  eq({ r.tasks[2].tags, r.tasks[2].title }, { { "a" }, "Only tags here" })
 end)
 
 test("PAR-011 tags inherit from parent headings, kept apart from local ones", function()
   -- Fuji has no workflow of its own, so TODO applies (Etna's would not).
-  local r = parse("# Fuji :engineering:\n## TODO Review architecture :design:\n- [ ] Sub :not-a-tag:\n### TODO Detail :engineering:")
+  local r = parse("# Fuji :engineering:\n## TODO Review architecture :design:\n### NEXT Sub\n### TODO Detail :engineering:")
   eq({ r.tasks[1].tags, r.tasks[1].inherited_tags }, { { "design" }, { "engineering" } })
-  eq({ r.tasks[2].tags, r.tasks[2].inherited_tags, r.tasks[2].title }, { {}, { "engineering", "design" }, "Sub :not-a-tag:" })
+  eq({ r.tasks[2].tags, r.tasks[2].inherited_tags }, { {}, { "engineering", "design" } })
   -- A tag set locally is not repeated as inherited.
   eq({ r.tasks[3].tags, r.tasks[3].inherited_tags }, { { "engineering" }, { "design" } })
   local off = cfg_from({ inherit = { tags = false } })
   eq(parse("# Fuji :engineering:\n## TODO A :design:", off).tasks[1].inherited_tags, {})
 end)
-
--- Properties (PAR-012, PAR-013) -----------------------------------------------
 
 test("PAR-012/013 drawers: any name, unknown ones kept, case-insensitive lookup", function()
   local r = parse("## TODO Review\n:PROPERTIES:\n:ID: etna-review-001\n:Effort: 2:00\n:custom_thing: kept as is\n:END:")
@@ -175,36 +178,27 @@ end)
 
 test("configured properties inherit; PROJECT and WORKFLOW always do", function()
   local cfg = cfg_from({ inherit = { properties = { "assigned" } } })
-  local r = parse("# Notes\n:PROPERTIES:\n:ASSIGNED: Tavren Solis\n:EFFORT: 1:00\n:END:\n## TODO A\n- [ ] B", cfg)
+  local r = parse("# Notes\n:PROPERTIES:\n:ASSIGNED: Tavren Solis\n:EFFORT: 1:00\n:END:\n## TODO A\n### TODO B", cfg)
   eq({ r.tasks[1].person, r.tasks[2].person }, { "Tavren Solis", "Tavren Solis" })
   eq(r.tasks[1].inherited_properties, { ASSIGNED = "Tavren Solis" })
   eq(parse("# Notes\n:PROPERTIES:\n:ASSIGNED: Tavren Solis\n:END:\n## TODO A").tasks[1].person, nil)
 end)
 
--- States (PAR-014, PAR-015, §3.3) ---------------------------------------------
-
-test("a checkbox state comes from :STATE:, else the box", function()
-  local r = parse("- [ ] Plain\n- [x] Done plain\n- [ ] Waits\n  :PROPERTIES:\n  :STATE: WAITING\n  :END:")
-  eq(vim.tbl_map(function(t)
-    return t.state .. (t.done and " x" or "")
-  end, r.tasks), { "TODO", "DONE x", "WAITING" })
-  eq(r.tasks[3].section, "waiting")
+test("WAITING is a state like any other; a WAITING heading is in WAITING ON", function()
+  local r = parse("## WAITING Reply\n:PROPERTIES:\n:ASSIGNED: Elira Voss\n:END:")
+  eq({ r.tasks[1].state, r.tasks[1].section, r.tasks[1].person }, { "WAITING", "waiting", "Elira Voss" })
 end)
 
-test("PAR-014 an unknown state is a diagnostic, kept, and never counts as done", function()
-  local r = parse("- [ ] Odd\n  :PROPERTIES:\n  :STATE: PONDERING\n  :END:\n## BACKLOG Not in this workflow")
-  eq({ r.tasks[1].state, r.tasks[1].done }, { "PONDERING", false })
-  eq(categories(r), { "1 unknown-state", "5 unknown-state" })
-  eq(#r.tasks, 1)
+test("PAR-014 a state from another workflow is a diagnostic and not a task", function()
+  local r = parse("## BACKLOG Not in this workflow\n## PONDERING not a state anywhere")
+  eq(categories(r), { "1 unknown-state" })
+  eq(#r.tasks, 0)
 end)
 
-test(":STATE: disagreeing with an inline state, or with the box, is a diagnostic", function()
-  local r = parse("- [ ] NEXT Thing\n  :PROPERTIES:\n  :STATE: WAITING\n  :END:\n- [x] Other\n  :PROPERTIES:\n  :STATE: NEXT\n  :END:")
-  eq({ r.tasks[1].state, r.tasks[2].state, r.tasks[2].done }, { "WAITING", "NEXT", true })
-  eq(categories(r), { "1 state-conflict", "5 state-conflict" })
+test(":STATE: is not an Org property and changes nothing", function()
+  local r = parse("## TODO Thing\n:PROPERTIES:\n:STATE: WAITING\n:END:")
+  eq({ r.tasks[1].state, r.tasks[1].properties.STATE, r.diagnostics }, { "TODO", "WAITING", {} })
 end)
-
--- Projects and workflows (PAR-025, D2) ----------------------------------------
 
 test("PAR-025 a project's workflow applies to its tasks", function()
   local r = parse("# Etna\n## IN PROGRESS Migrate cluster\n## READY Plan\n# Fuji\n## TODO Survey\n## READY Not a state here")
@@ -227,8 +221,8 @@ test(":PROJECT: and :WORKFLOW: properties, and front matter project:", function(
   local r = parse("# Notes\n:PROPERTIES:\n:PROJECT: Krakatoa\n:END:\n## REVIEW Checklist\n## TODO Other\n:PROPERTIES:\n:WORKFLOW: etna\n:END:")
   eq({ r.tasks[1].project, r.tasks[1].state }, { "Krakatoa", "REVIEW" })
   eq(#r.tasks, 1) -- "TODO" is not an etna state, so "## TODO Other" is organizational
-  local fm = parse("---\nproject: Etna\n---\n- [ ] Plain box\n## BACKLOG Idea")
-  eq({ fm.tasks[1].state, fm.tasks[2].state, fm.tasks[2].project }, { "BACKLOG", "BACKLOG", "Etna" })
+  local fm = parse("---\nproject: Etna\n---\n## BACKLOG Idea")
+  eq({ fm.tasks[1].state, fm.tasks[1].project }, { "BACKLOG", "Etna" })
 end)
 
 test("an unknown :WORKFLOW: falls back to the default with a diagnostic", function()
@@ -286,18 +280,16 @@ test("v0.1 forms still read, and are listed as legacy", function()
 end)
 
 test("a DEADLINE wins over a v0.1 [due:] date", function()
-  local r = parse("- [ ] Thing [due:2026-11-01]\n  DEADLINE: <2026-11-09 Mon>")
+  local r = parse("## TODO Thing [due:2026-11-01]\nDEADLINE: <2026-11-09 Mon>")
   eq(r.tasks[1].due, "2026-11-09")
 end)
-
--- Duplicate IDs (PAR-028) -----------------------------------------------------
 
 test("PAR-028 duplicate :ID: in one note and across notes", function()
   local r = parse("## TODO A\n:PROPERTIES:\n:ID: x1\n:END:\n## TODO B\n:PROPERTIES:\n:ID: x1\n:END:")
   eq(categories(r), { "5 duplicate-id" })
   local root = notes()
   write(root, "a.md", "## TODO A\n:PROPERTIES:\n:ID: shared\n:END:\n")
-  write(root, "b.md", "- [ ] B\n  :PROPERTIES:\n  :ID: shared\n  :END:\n")
+  write(root, "b.md", "## TODO B\n:PROPERTIES:\n:ID: shared\n:END:\n")
   local result = scanner.collect(root)
   local dupes = vim.tbl_filter(function(w)
     return w.category == "duplicate-id"
@@ -323,18 +315,19 @@ test("examples/sample-notes.md parses as its comments describe, with no warnings
     return ("%d %s %s%s %s %s"):format(t.line, t.project or "-", t.state, t.done and " x" or "", t.priority or "-", t.due or "-")
   end, result.tasks), {
     "12 Etna IN PROGRESS A 2026-11-05",
-    "17 Etna COMPLETE x - -",
-    "18 Etna BACKLOG - -",
-    "21 Etna BLOCKED - -",
-    "25 Krakatoa REVIEW B 2026-10-30",
-    "36 - TODO - -",
-    "38 - WAITING - 2026-11-06",
-    "44 - WAITING - -",
-    "51 - DONE x - -",
+    "20 Etna READY - -",
+    "23 Etna BLOCKED - -",
+    "27 Krakatoa REVIEW B 2026-10-30",
+    "34 - TODO - -",
+    "37 - WAITING - 2026-11-06",
+    "43 - WAITING - -",
+    "49 - DONE x - -",
     "52 - CANCELED x - -",
   })
-  eq(result.tasks[3].parent, 1) -- a checkbox under a heading task
+  eq(result.tasks[2].parent, 1)
+  eq(result.tasks[1].progress, { done = 1, total = 2, of = "checkboxes" })
   eq(result.tasks[1].inherited_tags, { "engineering" })
+  eq(result.tasks[8].closed.date, "2026-10-28")
   eq(result.diagnostics, {})
   eq(result.legacy, {})
 end)

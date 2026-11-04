@@ -80,11 +80,10 @@ test("nested bullets count when they carry a keyword", function()
   eq(texts(result), { "Child", "Grandchild" })
 end)
 
-test("a checkbox before the keyword is allowed; the box decides completion (spec §3.3)", function()
+test("v0.1: a checkbox before the keyword is allowed; [x] or a done keyword means done", function()
   local result = parse("- [ ] TODO A\n- [x] TODO B\n- [X] TODO C\n- [ ] DONE D")
-  eq(states(result), { "TODO", "TODO x", "TODO x", "DONE" })
-  -- B, C and D disagree with their box: each is a diagnostic.
-  eq(#result.warnings, 3)
+  eq(states(result), { "TODO", "TODO x", "TODO x", "DONE x" })
+  eq(result.warnings, {})
 end)
 
 test("keywords in code fences and indented code are ignored", function()
@@ -96,9 +95,8 @@ test("an unclosed fence hides everything after it", function()
   eq(texts(parse("- TODO One\n```\n- TODO Two")), { "One" })
 end)
 
-test("prose is never a task; ordered items are, like bullets (spec §3.2)", function()
-  eq(#parse("TODO in prose\nSome text TODO").tasks, 0)
-  eq(texts(parse("1. TODO Numbered\n2. [ ] Boxed\n3. plain")), { "Numbered", "Boxed" })
+test("ordered items and prose are not tasks", function()
+  eq(#parse("1. TODO Numbered\n2. [ ] Boxed\nTODO in prose\nSome text TODO").tasks, 0)
 end)
 
 test("reports source lines, handling CRLF and a BOM", function()
