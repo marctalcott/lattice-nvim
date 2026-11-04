@@ -726,8 +726,8 @@ function M.locate(lines, target, cfg)
   return require("lattice.mutate").nearest(matches, target.line, target.twins), parsed
 end
 
--- Runs `op(lines, cfg, line)` from mutate on the note behind the row under
--- the cursor, writes the result into that note's buffer (never the file),
+-- Runs `op(lines, cfg, line, parsed)` from mutate on the note behind the
+-- row under the cursor, writes the result into that note's buffer (never the file),
 -- and repaints. Org's agenda edits the same way.
 local function edit_row(op)
   local target = state.targets[vim.api.nvim_win_get_cursor(0)[1]]
@@ -738,13 +738,14 @@ local function edit_row(op)
   local cfg = state.result.cfg
   local buf = note_buffer(target.path)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local line = M.locate(lines, target, cfg)
+  local line, parsed = M.locate(lines, target, cfg)
   if not line then
     vim.notify("Lattice: that task has moved or changed; press r to refresh", vim.log.levels.WARN)
     return
   end
   local mutate = require("lattice.mutate")
-  local ok, new_lines, message = pcall(op, lines, cfg, line)
+  -- locate's parse is of these very lines, so the edit reuses it.
+  local ok, new_lines, message = pcall(op, lines, cfg, line, parsed)
   if not ok or not new_lines then
     vim.notify("Lattice: " .. tostring(ok and message or new_lines), vim.log.levels.WARN)
     return
@@ -782,16 +783,16 @@ function M.row_state()
   local keywords = require("lattice.keywords")
   vim.ui.select(keywords.choices(kws), { prompt = "State: " }, function(choice)
     if choice then
-      edit_row(function(l, c, n)
-        return require("lattice.mutate").set_state(l, c, n, choice == keywords.NO_STATE and "" or choice)
+      edit_row(function(l, c, n, p)
+        return require("lattice.mutate").set_state(l, c, n, choice == keywords.NO_STATE and "" or choice, nil, p)
       end)
     end
   end)
 end
 
 function M.row_priority(direction)
-  edit_row(function(lines, cfg, line)
-    return require("lattice.mutate").shift_priority(lines, cfg, line, direction)
+  edit_row(function(lines, cfg, line, parsed)
+    return require("lattice.mutate").shift_priority(lines, cfg, line, direction, parsed)
   end)
 end
 

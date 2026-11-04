@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Bug fixes from a code review of 0.2.5. No new features or settings.
+
+### Fixed
+
+- Completing a repeating task whose heading had two `SCHEDULED` (or `DEADLINE`) entries advanced the first and kept the other, losing what the user wrote. Every planning edit now refuses a heading with two entries of the same keyword, and refuses to replace one it can't read; this covers completing repeats, `CLOSED`, migration and rescheduling alike.
+- Removing a date (`S` / `D` with an empty answer) on a heading with two entries removed the first, which might not be the one in effect; it is now refused. A single unreadable entry can still be removed.
+- `:LatticeMigrate` left one copy of a repeated `[due:]` or `[promised:]` on a heading.
+- A dashboard edit parsed the note two or three times; the edit now reuses the parse that found its task, and a state change only recounts its parent's progress when that count can change.
+
 ## 0.2.5 — 2026-11-04
 
 Bug fixes from a code review of 0.2.4 (#20). No new features or settings.
