@@ -46,17 +46,6 @@ local function heading_meta(lines, structure, index)
   return metadata.read(lines, heading.line + 1, math.min(last, heading.stop), function() end)
 end
 
---- How many entries of `list` share each `key(entry)`: the `expected`
---- count M.nearest checks, taken when a list of targets is drawn.
-function M.tally(list, key)
-  local counts = {}
-  for _, entry in ipairs(list) do
-    local k = key(entry)
-    counts[k] = (counts[k] or 0) + 1
-  end
-  return counts
-end
-
 --- The line in `matches` nearest to `line`. nil when there is none, or when
 --- the number of matches is not `expected` (the count when the target was
 --- shown): a heading with that text was renamed, removed or added since, so
@@ -74,9 +63,10 @@ function M.nearest(matches, line, expected)
   return best
 end
 
---- The heading whose text is `text`: on `line` if it is still there, else
---- the nearest such heading (see M.nearest for `expected`). For refile
---- targets chosen from a scan that may be out of date.
+--- The heading whose text is `text` nearest to `line`, or nil when the
+--- number of such headings is not `expected` (see M.nearest), even if one
+--- is still on `line`. For refile targets chosen from a scan that may be
+--- out of date; `expected` comes from agenda.tally with agenda.heading_key.
 function M.find_heading(lines, line, text, expected)
   local structure = parse_structure(lines)
   local matches = {}
@@ -88,16 +78,18 @@ function M.find_heading(lines, line, text, expected)
   return M.nearest(matches, line, expected)
 end
 
--- A planning entry as written ("<2026-11-20 Fri>"), active, inactive or
--- unreadable, from the heading's planning lines.
+-- Every `keyword` entry as written ("<2026-11-20 Fri>"), active, inactive
+-- or unreadable, from the heading's planning lines, in order.
 local function written_planning(lines, planning_lines, keyword)
+  local found = {}
   for _, at in ipairs(planning_lines or {}) do
     for _, token in ipairs(metadata.planning_pairs(lines[at])) do
       if token.keyword == keyword then
-        return token.raw
+        found[#found + 1] = token.raw
       end
     end
   end
+  return found
 end
 
 --- "Now" for completion: local date and time, unless the caller passes one.
@@ -128,7 +120,6 @@ end
 -- Planning ---------------------------------------------------------------------
 
 local ORDER = { CLOSED = 1, DEADLINE = 2, SCHEDULED = 3 }
-
 
 local function render_planning(indent, tokens)
   local parts = {}
@@ -201,12 +192,22 @@ function M.set_date(lines, line, keyword, when)
     return nil, "no heading on this line"
   end
   local meta = heading_meta(lines, structure, index)
-  local existing = meta[keyword:lower()]
   local written = written_planning(lines, meta.planning_lines, keyword)
-  if written and not existing then
-    -- Unreadable (or inactive): replacing it would drop whatever repeater
-    -- or warning the user wrote, so say so instead.
-    return nil, ("this heading's %s %s can't be read (see WARNINGS); fix or remove it first"):format(keyword, written)
+  -- set_planning rewrites the first entry. With several, or one Lattice
+  -- can't read, that would drop text the user wrote, so say so instead.
+  if #written > 1 then
+    return nil, ("this heading has %d %s entries; keep one, then try again"):format(#written, keyword)
+  end
+  local existing = meta[keyword:lower()]
+  if written[1] and not existing then
+    local inactive_ts = timestamp.parse(written[1])
+    if inactive_ts then
+      -- Inactive [..]: readable, just ignored. Rescheduling makes it active
+      -- and keeps its repeater and warning.
+      existing = inactive_ts
+    else
+      return nil, ("this heading's %s %s can't be read (see WARNINGS); fix or remove it first"):format(keyword, written[1])
+    end
   end
   local ts, err = timestamp.parse("<" .. when.date .. (when.time and (" " .. when.time) or "") .. ">")
   if not ts then
@@ -763,7 +764,7 @@ function M.migrate(lines, cfg)
     if reason then
       return reason
     end
-    local deadline = written_planning(lines, task.planning_lines, "DEADLINE")
+    local deadline = written_planning(lines, task.planning_lines, "DEADLINE")[1]
     if legacy.due and deadline and not (task.deadline and task.deadline.date == legacy.due) then
       return ("its [due:%s] differs from its DEADLINE %s; keep one"):format(legacy.due, deadline)
     end

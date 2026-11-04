@@ -4,6 +4,7 @@ local H = require("helpers")
 local test, eq = H.test, H.eq
 local config, dashboard = H.config, H.dashboard
 local mutate = require("lattice.mutate")
+local agenda = require("lattice.agenda")
 
 local DEFAULT = config.defaults()
 
@@ -22,10 +23,10 @@ local function target_for(lines, line, path)
   for _, task in ipairs(parsed.tasks) do
     task.path = path or "a.md"
   end
-  local counts = mutate.tally(parsed.tasks, dashboard.twin_key)
+  local counts = agenda.tally(parsed.tasks, agenda.task_key)
   for _, task in ipairs(parsed.tasks) do
     if task.line == line then
-      return { line = line, title = task.title, kind = task.kind, raw = task.raw, twins = counts[dashboard.twin_key(task)] }
+      return { line = line, title = task.title, kind = task.kind, twins = counts[agenda.task_key(task)] }
     end
   end
 end
@@ -103,4 +104,30 @@ test("rescheduling refuses to overwrite a date it can't read; removing it still 
   -- A readable date is still replaced, keeping its repeater.
   local ok = assert(mutate.set_date(L("## TODO water\nSCHEDULED: <2026-10-01 Thu +1d>"), 1, "SCHEDULED", { date = "2026-11-05" }))
   eq(ok[2], "SCHEDULED: <2026-11-05 Thu +1d>")
+end)
+
+-- Review of 0.2.4 ---------------------------------------------------------------------
+
+test("rescheduling refuses a heading with two SCHEDULED entries, in either order", function()
+  for _, planning in ipairs({ "SCHEDULED: <bad> SCHEDULED: <2026-10-01 Thu +1d>", "SCHEDULED: <2026-10-01 Thu +1d> SCHEDULED: <bad>" }) do
+    local _, err = mutate.set_date(L("## TODO w\n" .. planning), 1, "SCHEDULED", { date = "2026-11-05" })
+    eq(err, "this heading has 2 SCHEDULED entries; keep one, then try again")
+  end
+end)
+
+test("a new task with the same title but a different state also refuses the edit", function()
+  local target = target_for(L("# A\n## TODO Call"), 2)
+  target.raw = "## TODO Call" -- what 0.2.4's unchanged-line shortcut used
+  eq(dashboard.locate(L("# A\n## TODO Call\n## NEXT Call"), target, DEFAULT), nil)
+end)
+
+test("rescheduling an inactive SCHEDULED makes it active and keeps its repeater", function()
+  local out = assert(mutate.set_date(L("## TODO x\nSCHEDULED: [2026-10-01 Thu +1w]"), 1, "SCHEDULED", { date = "2026-11-05" }))
+  eq(T(out), "## TODO x\nSCHEDULED: <2026-11-05 Thu +1w>")
+end)
+
+test("the same [due:] date written twice is not a conflict", function()
+  local out, count, skipped = mutate.migrate(L("# Notes\n- TODO pay [due:2026-11-10] [due:2026-11-10]"), DEFAULT)
+  eq({ count, #skipped }, { 1, 0 })
+  eq(T(out), "# Notes\n\n## TODO pay\nDEADLINE: <2026-11-10 Tue>")
 end)

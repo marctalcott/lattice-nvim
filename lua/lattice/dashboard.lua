@@ -408,8 +408,8 @@ function M.render(result, today, opts)
   -- tell when one of them changed (M.locate counts the same way).
   local twins
   local function twin_count(task)
-    twins = twins or require("lattice.mutate").tally(result.tasks or {}, M.twin_key)
-    return twins[M.twin_key(task)]
+    twins = twins or agenda.tally(result.tasks or {}, agenda.task_key)
+    return twins[agenda.task_key(task)]
   end
 
   local function add(line, group)
@@ -532,7 +532,6 @@ function M.render(result, today, opts)
           line = row.task.line,
           title = row.task.title,
           kind = row.task.kind,
-          raw = row.task.raw,
           twins = row.task.title and twin_count(row.task),
         }
       for _, part in ipairs(row.parts) do
@@ -706,33 +705,16 @@ local function note_buffer(path)
   return require("lattice.mutate").note_buffer(path)
 end
 
---- Tasks that M.locate can't tell apart share this key.
-function M.twin_key(task)
-  return ("%s\0%s\0%s"):format(task.path or "", task.kind or "heading", task.title)
-end
-
 -- The line of a task in `lines`: the nearest task of the same kind whose
 -- title equals `target.title`, read with `cfg`, so edits elsewhere in the
 -- note don't send Lattice to the wrong line (PAR-030). nil when none
 -- matches, or when the number of such tasks is not `target.twins`, the
--- count when the dashboard was drawn: one was renamed, removed or added,
--- so which was meant is unknown. Also returns the parse, when one was
--- needed: a task whose title was unique, whose line is unchanged and has no
--- copy elsewhere is found without one.
+-- count when the dashboard was drawn (agenda.task_key): one was renamed,
+-- removed or added, so which was meant is unknown. One rule, one parse;
+-- the parse is returned for the caller to reuse.
 function M.locate(lines, target, cfg)
   if target.title == nil then
     return target.line
-  end
-  if target.raw ~= nil and lines[target.line] == target.raw and (target.twins or 1) == 1 then
-    local copies = 0
-    for _, text in ipairs(lines) do
-      if text == target.raw then
-        copies = copies + 1
-      end
-    end
-    if copies == 1 then
-      return target.line
-    end
   end
   local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
   local matches = {}

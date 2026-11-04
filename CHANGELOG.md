@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Bug fixes from a code review of 0.2.4. No new features or settings.
+
+### Fixed
+
+- Rescheduling a heading with two `SCHEDULED` (or `DEADLINE`) entries replaced the first one, even an unreadable one, and kept the duplicate; it is now refused until one is removed.
+- A dashboard row was still edited when a new task with the same title but a different state (`## NEXT Call` next to `## TODO Call`) had appeared since the dashboard was drawn; it is now refused, as refile already did.
+- Rescheduling an inactive `SCHEDULED: [..]` was refused with "can't be read"; it now becomes the new active date and keeps its repeater and warning.
+- `:LatticeMigrate` refused an item that repeats the same `[due:]` date; only different dates are a conflict now.
+
 ## 0.2.4 — 2026-11-04
 
 Bug fixes from a code review of the 0.2.2 fixes (#18). No new features or settings.

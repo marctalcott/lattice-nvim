@@ -108,14 +108,15 @@ local function split_tags(text)
 end
 
 -- v0.1 inline dates: [due:YYYY-MM-DD], and [promised:...] on waiting items.
--- Also returns the tags that have more than one valid date: only the first
--- is used, so :LatticeMigrate must not convert them.
+-- Also returns the tags that have two different valid dates: only the
+-- first is used, so :LatticeMigrate must not convert them. Repeats of the
+-- same date lose nothing.
 local function legacy_dates(text, waiting, bad)
   local dates, multiple = {}, nil
   for _, tag in ipairs(waiting and { "due", "promised" } or { "due" }) do
     for value in text:gmatch("%[" .. tag .. ":([^%]]*)%]") do
       if timestamp.valid_date(value) then
-        if dates[tag] then
+        if dates[tag] and dates[tag] ~= value then
           multiple = multiple or {}
           multiple[tag] = true
         end
@@ -169,7 +170,6 @@ local function new_task(kind, line, stop)
     project = nil,
     workflow = nil,
     line = line,
-    raw = nil, -- the source line as written, to find the task again cheaply
     source = { start_line = line, end_line = stop },
     legacy = {},
   }
@@ -492,7 +492,6 @@ function M.parse(lines, cfg)
       end
 
       task.title = title
-      task.raw = lines[node.line]
       task.tags = own_tags
       task.inherited_tags = {}
       for _, tag in ipairs(inherited_tags) do

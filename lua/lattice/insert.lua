@@ -593,10 +593,8 @@ function M.refile()
   local choices = {}
   local seen_files = {}
   -- How many headings in each note share a text (mutate.find_heading).
-  local function text_key(heading)
-    return heading.path .. "\0" .. heading.text
-  end
-  local text_counts = mutate.tally(result.outlines or {}, text_key)
+  local agenda = require("lattice.agenda")
+  local text_counts = agenda.tally(result.outlines or {}, agenda.heading_key)
   for _, heading in ipairs(result.outlines or {}) do
     if not seen_files[heading.path] then
       seen_files[heading.path] = true
@@ -607,7 +605,7 @@ function M.refile()
       path = heading.path,
       line = heading.line,
       text = heading.text,
-      same = text_counts[text_key(heading)],
+      same = text_counts[agenda.heading_key(heading)],
     }
   end
   vim.ui.select(choices, {
