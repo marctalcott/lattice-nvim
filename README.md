@@ -178,7 +178,7 @@ DONE (5)
 
 ───────────────────────────────────────────────────────────────────────────────────────────
 Enter  Open note    r  Refresh    q  Close    ?  Help
-1 Overview  2 Week  3 TODOs  4 Projects    / Filter    t State  +/- Priority  S/D Dates  s Save
+1 Overview  2 Week  3 TODOs  4 Projects    F Filter    t State  +/- Priority  S/D Dates  s Save
 ```
 
 - **MY TO DO** and **WAITING ON** list open tasks. Each row shows the state, priority, assignee and the task's own tags. WAITING ON holds tasks in the `WAITING` state and v0.1 `Waiting On` items. Tasks with a date come first, earliest first, so overdue items lead. Undated tasks follow. Ties are ordered by file path and line.
@@ -200,7 +200,7 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 | `3` | **All TODOs**: every open task, by priority (a task without one counts as the default, `B`), then deadline | `C-c a t` |
 | `4` | **Projects**: each project with its open and done counts, `:PROJECT_STATUS:` and next action (its first `NEXT` task, else its most urgent open task). `Enter` lists the project's TODOs. | |
 
-`/` sets a **filter** for every view; `/` with an empty answer clears it. Terms combine:
+`F` sets a **filter** for every view; `F` with an empty answer clears it. (`/` searches the dashboard text, as in any buffer.) Terms combine:
 
 | Term | Keeps tasks that |
 |------|------------------|

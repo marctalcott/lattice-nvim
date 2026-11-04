@@ -350,3 +350,17 @@ test("archive.location is validated, and a missing folder is reported, not creat
   eq(vim.fn.isdirectory(root .. "/Archives"), 0)
   eq(vim.api.nvim_buf_get_lines(0, 0, -1, false), { "## DONE Old" })
 end)
+
+test("F opens the filter; / is left to Vim's search", function()
+  open_on()
+  local function local_desc(lhs)
+    for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, "n")) do
+      if map.lhs == lhs then
+        return map.desc
+      end
+    end
+  end
+  eq(local_desc("F"), "Lattice: filter")
+  eq(local_desc("/"), nil)
+  assert(H.dashboard_text():find("F Filter", 1, true))
+end)

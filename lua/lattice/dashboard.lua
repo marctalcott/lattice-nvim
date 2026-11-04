@@ -12,7 +12,7 @@ local DEFAULT_WARNING_DAYS = 14
 local DONE_LIMIT = 20 -- most recent done items shown
 local MONTHS = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
 local FOOTER = "Enter  Open note    r  Refresh    q  Close    ?  Help"
-local FOOTER_2 = "1 Overview  2 Week  3 TODOs  4 Projects    / Filter    t State  +/- Priority  S/D Dates  s Save"
+local FOOTER_2 = "1 Overview  2 Week  3 TODOs  4 Projects    F Filter    t State  +/- Priority  S/D Dates  s Save"
 local VIEW_NAMES = { overview = "Overview", week = "Week agenda", todo = "All TODOs", projects = "Projects" }
 
 local WINDOW_OPTIONS = {
@@ -290,7 +290,8 @@ local function help_lines(keymaps)
     "KEYS",
     "  Enter   Open the note at the task (on a project: list its TODOs)",
     "  1 2 3 4 Overview, week agenda, all TODOs (by priority), projects",
-    "  /       Filter: +tag -tag #A project:Name @person state:NEXT words",
+    "  F       Filter: +tag -tag #A project:Name @person state:NEXT words",
+    "  /       Search the dashboard text, as in any buffer",
     "  b f .   Previous, next, this week (week agenda)",
     "  t       Change the task's state (Org agenda's t)",
     "  + -     Raise or lower its priority",
@@ -484,7 +485,7 @@ function M.render(result, today, opts)
   if view ~= "overview" or not agenda.is_empty(opts.query) then
     local status = "View: " .. VIEW_NAMES[view]
     if not agenda.is_empty(opts.query) then
-      status = status .. "    Filter: " .. opts.query .. "    (/ then Enter clears)"
+      status = status .. "    Filter: " .. opts.query .. "    (F then Enter clears)"
     end
     add(status, "Special")
   end
@@ -930,7 +931,7 @@ local function create_buffer()
   map("4", function()
     M.set_view("projects")
   end, "Lattice: projects")
-  map("/", M.prompt_filter, "Lattice: filter")
+  map("F", M.prompt_filter, "Lattice: filter")
   map("b", function()
     M.shift_week(-1)
   end, "Lattice: previous week")

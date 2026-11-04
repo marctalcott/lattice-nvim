@@ -132,7 +132,7 @@ items, deadlines and repeats; today adds `Sched. Nx`, `N d. ago` and
 (C-c a t), `4` projects (counts, status, next action; <CR> lists one
 project's TODOs).
 
-`/` filters every view: `+tag` `-tag` `#A` `project:Name` `@person`
+`F` filters every view (`/` still searches): `+tag` `-tag` `#A` `project:Name` `@person`
 `state:NEXT` and title words. An empty answer clears it.
 
 Editing rows, as in Org's agenda: `t` state, `+` / `-` priority, `S` / `D`
