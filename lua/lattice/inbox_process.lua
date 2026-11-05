@@ -290,9 +290,26 @@ function M.note_lines(capture, body, title, keyword)
   return lines
 end
 
---- The :CAPTURE_ID: value in a note's text, or nil.
-function M.capture_id_in(text)
-  return text:match("\n:CAPTURE_ID:[ \t]*([^%s]+)[ \t]*\r?\n") or text:match("^:CAPTURE_ID:[ \t]*([^%s]+)")
+--- Whether a note's text has a `:CAPTURE_ID:` property line equal to `id`.
+function M.has_capture_id(text, id)
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    local value = line:match("^[ \t]*:[Cc][Aa][Pp][Tt][Uu][Rr][Ee]_[Ii][Dd]:[ \t]*(.-)[ \t\r]*$")
+    if value == id then
+      return true
+    end
+  end
+  return false
+end
+
+--- Whether the file at `path`, as saved on disk, has `id` as a capture ID.
+function M.file_has_capture_id(path, id)
+  local file = io.open(path, "r")
+  if not file then
+    return false
+  end
+  local text = file:read("*a") or ""
+  file:close()
+  return M.has_capture_id(text, id)
 end
 
 return M

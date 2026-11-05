@@ -1,10 +1,12 @@
--- Fetches captures from the GitHub inbox repositories (LATTICE_INBOX_SPEC
--- A1.5, A1.6, A1.11). Each active repository is mirrored in a shallow,
--- sparse Git clone under stdpath("cache"); that clone is the local cache.
--- Everything runs asynchronously through `git` and never prompts.
+-- Fetches captures from the GitHub inbox repositories and removes processed
+-- ones (LATTICE_INBOX_SPEC A1.5, A1.6, A1.11, A1.12). Each active repository
+-- is mirrored in a shallow, sparse Git clone under stdpath("cache"); that
+-- clone is the local cache. Everything runs asynchronously through `git`
+-- and never prompts.
 local config = require("lattice.config")
 local inbox_config = require("lattice.inbox_config")
 local keywords = require("lattice.keywords")
+local process = require("lattice.inbox_process")
 
 local M = {}
 
@@ -13,11 +15,15 @@ M.cache_root = vim.fn.stdpath("cache") .. "/lattice/inbox"
 M.timeout_ms = 30000
 M.max_parallel = 4
 M.max_capture_bytes = 1024 * 1024
+M.max_push_attempts = 3
 
 -- Session state. `repos` maps a repository name to
 -- { name, role, url, status = "ok"|"error"|"fetching"|"pending", error,
---   last_success, captures, skipped, new }.
-M.state = { running = false, repos = {}, order = {}, config_error = nil, configured = false }
+--   last_success, captures, skipped, new_files }.
+-- `removals` maps M.key(capture) to a removal in progress or pending:
+-- { repo, id, file, kind = "filed"|"dismissed", note = path of the filed
+--   note, status = "removing"|"pending", error }.
+M.state = { running = false, repos = {}, order = {}, config_error = nil, configured = false, removals = {} }
 
 local queued_rerun = false
 local startup_done = false
@@ -30,6 +36,17 @@ local function changed()
   for _, fn in ipairs(M.listeners) do
     fn()
   end
+end
+
+--- The key of a capture in `state.removals`: its repository and ID (or its
+--- file name when it has no ID).
+function M.key(capture)
+  return capture.repo .. "\0" .. (capture.id or capture.file)
+end
+
+local function removals()
+  M.state.removals = M.state.removals or {}
+  return M.state.removals
 end
 
 local function notify(message, level, opts)
@@ -70,7 +87,21 @@ function M.explain(result, repo)
   end
   local lower = stderr:lower()
   local reason
-  if lower:find("host key verification failed", 1, true) then
+  local rejected = lower:find("[remote rejected]", 1, true) or lower:find("[rejected]", 1, true)
+  if rejected then
+    -- Show what the server said (a protected branch, a missing permission).
+    local said = {}
+    for line in stderr:gmatch("[^\r\n]+") do
+      local text = vim.trim(line:match("^remote:(.*)$") or "")
+      if text ~= "" then
+        said[#said + 1] = text
+      end
+    end
+    last = #said > 0 and table.concat(said, " ") or vim.trim(stderr:match("[^\n]*rejected%][^\n]*") or last or "")
+    reason = "the repository refused the push"
+  elseif lower:find("please tell me who you are", 1, true) or lower:find("unable to auto-detect email", 1, true) then
+    reason = "Git has no identity for the removal commit; set user.name and user.email with git config --global"
+  elseif lower:find("host key verification failed", 1, true) then
     reason = "SSH host key not accepted yet; connect once from a terminal (for example ssh -T git@github.com)"
   elseif
     lower:find("authentication failed", 1, true)
@@ -138,6 +169,27 @@ local function chain(repo, steps, cwd, done)
     git(repo, steps[i], cwd, step)
   end
   step(nil)
+end
+
+-- Operations on a cache folder run one at a time (a fetch and a removal
+-- must not share a working tree). `fn(release)` must call release() once.
+local locks = {}
+local function with_lock(dir, fn)
+  local queue = locks[dir]
+  if queue then
+    queue[#queue + 1] = fn
+    return
+  end
+  locks[dir] = {}
+  local function release()
+    local next_fn = table.remove(locks[dir], 1)
+    if next_fn then
+      next_fn(release)
+    else
+      locks[dir] = nil
+    end
+  end
+  fn(release)
 end
 
 -- Parsed captures by path, reused while the file's size and mtime match.
@@ -261,24 +313,25 @@ end
 -- Fetches one repository. The cache is rebuilt once if it is missing or
 -- damaged (for example by an interrupted fetch). A failed fetch keeps the
 -- captures already in the cache (§6.4).
-local function sync_repo(repo, entry, done)
+local function sync_repo(repo, entry, done, release)
   local dir = M.cache_dir(repo)
   local had_cache = vim.uv.fs_stat(dir .. "/.git/HEAD") ~= nil
   local before = had_cache and file_set((M.list_captures(repo, dir))) or {}
 
   local function finish(result)
     entry.captures, entry.skipped = M.list_captures(repo, dir)
+    entry.new_files = {}
     if result.code == 0 then
       entry.status, entry.error, entry.last_success = "ok", nil, os.time()
-      entry.new = 0
       for _, capture in ipairs(entry.captures) do
         if not before[capture.file] then
-          entry.new = entry.new + 1
+          entry.new_files[capture.file] = true
         end
       end
     else
-      entry.status, entry.error, entry.new = "error", M.explain(result, repo), 0
+      entry.status, entry.error = "error", M.explain(result, repo)
     end
+    release()
     done()
   end
 
@@ -305,10 +358,22 @@ local function sync_repo(repo, entry, done)
   end)
 end
 
+-- New captures in a fetched repository, not counting ones already filed.
+local function new_count(entry)
+  local count = 0
+  for _, capture in ipairs(entry.captures or {}) do
+    if (entry.new_files or {})[capture.file] and not removals()[M.key(capture)] then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 local function summary(mode, repos)
   local new, failed = 0, {}
   for _, entry in ipairs(repos) do
-    new = new + (entry.new or 0)
+    entry.new = new_count(entry)
+    new = new + entry.new
     if entry.status == "error" then
       failed[#failed + 1] = entry
     end
@@ -369,7 +434,7 @@ function M.fetch(mode, on_done)
     end
     entry.name, entry.url, entry.role, entry.root_missing = repo.name, repo.url, repo.role, repo.root_missing
     entry.notes_root, entry.repo = repo.notes_root, repo
-    entry.new = 0
+    entry.new_files = {}
     if repo.role == "active" then
       entry.status = entry.status or "pending"
       active[#active + 1] = entry
@@ -397,11 +462,13 @@ function M.fetch(mode, on_done)
       next_index = next_index + 1
       running = running + 1
       entry.status = "fetching"
-      sync_repo(entry.repo, entry, function()
+      local function on_repo_done()
         running, finished = running - 1, finished + 1
         if finished == #active then
           M.state.running = false
+          M.recover(active)
           summary(mode, active)
+          M.retry_removals()
           changed()
           if on_done then
             on_done()
@@ -413,11 +480,203 @@ function M.fetch(mode, on_done)
         else
           launch()
         end
+      end
+      with_lock(M.cache_dir(entry.repo), function(release)
+        sync_repo(entry.repo, entry, on_repo_done, release)
       end)
     end
   end
   launch()
   return true
+end
+
+-- Removal (A1.6, §12) -------------------------------------------------------------
+
+local function non_fast_forward(result)
+  local stderr = result.stderr or ""
+  return stderr:find("non%-fast%-forward") or stderr:find("fetch first") or stderr:find("stale info")
+end
+
+-- Deletes one capture file from the repository: git rm, commit, push. A push
+-- rejected as non-fast-forward is retried after a fresh fetch, up to
+-- max_push_attempts. A file that is already gone counts as removed.
+-- `done(result)` gets code 0 on success.
+local function remove_file(repo, dir, file, done)
+  local rel = repo.directory ~= "" and (repo.directory .. "/" .. file) or file
+  local attempt = 0
+  local function try()
+    attempt = attempt + 1
+    git(repo, { "ls-files", "--error-unmatch", "--", rel }, dir, function(listed)
+      if listed.code ~= 0 then
+        return done({ code = 0 })
+      end
+      chain(repo, {
+        { "rm", "-q", "--", rel },
+        { "commit", "-q", "--no-verify", "-m", "Lattice: remove processed capture " .. file },
+        { "push", "-q", "--no-verify", "origin", "HEAD:refs/heads/" .. repo.branch },
+      }, dir, function(result)
+        if result.code == 0 or not non_fast_forward(result) or attempt >= M.max_push_attempts then
+          return done(result)
+        end
+        fetch_into(repo, dir, function(fetched)
+          if fetched.code ~= 0 then
+            return done(fetched)
+          end
+          try()
+        end)
+      end)
+    end)
+  end
+  if not vim.uv.fs_stat(dir .. "/.git/HEAD") then
+    return done({ code = -1, stderr = "the capture cache is missing; run :LatticeInboxRefresh" })
+  end
+  try()
+end
+
+--- Deletes a processed capture from its repository (§12). `kind` is "filed"
+--- (after the user saved the note at `note`) or "dismissed" (after
+--- confirmation). Until it succeeds the capture is listed as filed, removal
+--- pending; a filed capture whose removal fails stays so and is retried by
+--- the next fetch, a dismissed one returns to the inbox (§12.4).
+function M.remove(capture, kind, note)
+  local k = M.key(capture)
+  local record = removals()[k]
+  if record and record.status == "removing" then
+    return
+  end
+  record = record or {}
+  record.repo, record.id, record.file, record.kind = capture.repo, capture.id, capture.file, kind
+  record.note = note or record.note
+  record.status, record.error = "removing", nil
+  removals()[k] = record
+  changed()
+
+  local entry = M.state.repos[capture.repo]
+  local function failed(message)
+    if kind == "dismissed" then
+      removals()[k] = nil
+      notify(
+        ("Lattice Inbox: could not dismiss %s from %s: %s. It stays in the inbox."):format(capture.file, capture.repo, message),
+        vim.log.levels.WARN,
+        { title = "Lattice Inbox" }
+      )
+    else
+      record.status, record.error = "pending", message
+      notify(
+        ("Lattice Inbox: %s is filed, but removing it from %s failed: %s. The next fetch (:LatticeInboxRefresh) retries."):format(
+          capture.file,
+          capture.repo,
+          message
+        ),
+        vim.log.levels.WARN,
+        { title = "Lattice Inbox" }
+      )
+    end
+    changed()
+  end
+  if not (entry and entry.role == "active" and entry.repo) then
+    return failed("the repository is not active in this session")
+  end
+  local repo = entry.repo
+  local dir = M.cache_dir(repo)
+  with_lock(dir, function(release)
+    remove_file(repo, dir, capture.file, function(result)
+      local function finish()
+        local current = M.state.repos[capture.repo] or entry
+        current.captures, current.skipped = M.list_captures(repo, dir)
+        release()
+        if result.code == 0 then
+          removals()[k] = nil
+          if kind == "dismissed" then
+            notify(("Lattice Inbox: dismissed %s"):format(capture.file), nil, { title = "Lattice Inbox" })
+          end
+          changed()
+        else
+          failed(M.explain(result, repo))
+        end
+      end
+      if result.code == 0 then
+        return finish()
+      end
+      -- Undo the local commit so the cache matches the remote again.
+      git(repo, { "reset", "-q", "--hard", "refs/remotes/origin/" .. repo.branch }, dir, finish)
+    end)
+  end)
+end
+
+--- Recovery (A1.12): a listed capture whose ID is already in a saved note
+--- under the notes root was filed earlier (a crash, a failed removal, or a
+--- second filing). It is marked filed, removal pending, so it is not offered
+--- again. The note is found with the normal scan and confirmed on disk, so
+--- an unsaved buffer never counts.
+function M.recover(entries)
+  local wanted = {}
+  for _, entry in ipairs(entries) do
+    for _, capture in ipairs(entry.captures or {}) do
+      if capture.id and not removals()[M.key(capture)] then
+        wanted[capture.id] = wanted[capture.id] or {}
+        table.insert(wanted[capture.id], capture)
+      end
+    end
+  end
+  if next(wanted) == nil or not config.options.root then
+    return
+  end
+  local result = require("lattice.scanner").collect(config.options.root)
+  for _, heading in ipairs(result.outlines or {}) do
+    local captures = heading.capture_id and wanted[heading.capture_id]
+    if captures and process.file_has_capture_id(heading.path, heading.capture_id) then
+      wanted[heading.capture_id] = nil
+      for _, capture in ipairs(captures) do
+        removals()[M.key(capture)] = {
+          repo = capture.repo,
+          id = capture.id,
+          file = capture.file,
+          kind = "filed",
+          note = heading.path,
+          status = "pending",
+        }
+      end
+    end
+  end
+end
+
+--- Starts removal of every filed capture whose removal is pending, in the
+--- active repositories. Records for captures no longer listed are dropped.
+function M.retry_removals()
+  local listed = {}
+  for _, name in ipairs(M.state.order) do
+    local entry = M.state.repos[name]
+    if entry.role == "active" and entry.status == "ok" then
+      for _, capture in ipairs(entry.captures or {}) do
+        listed[M.key(capture)] = capture
+      end
+    end
+  end
+  for k, record in pairs(removals()) do
+    local entry = M.state.repos[record.repo]
+    if record.status == "pending" and entry and entry.status == "ok" then
+      if listed[k] then
+        M.remove(listed[k], "filed", record.note)
+      else
+        removals()[k] = nil
+      end
+    end
+  end
+end
+
+--- Removals for a repository, sorted by file.
+function M.removals_for(name)
+  local out = {}
+  for _, record in pairs(removals()) do
+    if record.repo == name then
+      out[#out + 1] = record
+    end
+  end
+  table.sort(out, function(a, b)
+    return a.file < b.file
+  end)
+  return out
 end
 
 --- :LatticeInboxRefresh
@@ -501,6 +760,13 @@ function M.status_lines()
       for _, capture in ipairs(entry.captures or {}) do
         if capture.error then
           line = line .. ("\n    %s: %s"):format(capture.file, capture.error)
+        end
+      end
+      for _, record in ipairs(M.removals_for(name)) do
+        if record.status == "removing" then
+          line = line .. ("\n    removing %s"):format(record.file)
+        else
+          line = line .. ("\n    removal pending %s%s"):format(record.file, record.error and (": " .. record.error) or "")
         end
       end
     end

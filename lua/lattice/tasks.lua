@@ -202,7 +202,7 @@ function M.parse(lines, cfg)
     warnings = {}, -- { line, severity, category, message }, shown on the dashboard
     legacy = {}, -- { line, form } for v0.1 syntax still in use
     front_matter = structure.front_matter,
-    headings = {}, -- every heading, for refile targets: { line, level, text, outline }
+    headings = {}, -- every heading, for refile targets: { line, level, text, outline, capture_id }
     structure = structure, -- markdown.parse's result, for callers that need both
   }
 
@@ -326,6 +326,7 @@ function M.parse(lines, cfg)
   end)
 
   local heading_ctx, item_ctx = {}, {}
+  local capture_ids = {} -- heading line -> :CAPTURE_ID: (LATTICE_INBOX_SPEC A1.12)
   local heading_task, item_task, source_of = {}, {}, {}
 
   for _, entry in ipairs(entries) do
@@ -354,6 +355,7 @@ function M.parse(lines, cfg)
       meta = metadata.read(lines, first, last, function(line, category, message)
         warn(line, category, message)
       end)
+      capture_ids[node.line] = meta.properties.CAPTURE_ID
     end
 
     -- Effective properties: inherited, then this node's own.
@@ -613,7 +615,13 @@ function M.parse(lines, cfg)
       table.insert(titles, 1, outline_title(up))
       up = up.parent and structure.headings[up.parent]
     end
-    result.headings[#result.headings + 1] = { line = heading.line, level = heading.level, text = heading.text, outline = titles }
+    result.headings[#result.headings + 1] = {
+      line = heading.line,
+      level = heading.level,
+      text = heading.text,
+      outline = titles,
+      capture_id = capture_ids[heading.line],
+    }
   end
 
   -- Duplicate IDs within the note (§13.4); the scanner checks across notes.

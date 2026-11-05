@@ -227,7 +227,9 @@ default. Both change buffers only; both notes are checked first.
                                                               *:LatticeHealth*
                                                                *:LatticeInbox*
 :LatticeInbox       Open the capture inbox: f file, t task,
-                    o open, R fetch, q close.             (<leader>li)
+                    o open, D dismiss, R fetch, q close.  (<leader>li)
+                    Saving a filed note removes its capture
+                    from GitHub; D asks first.
                                                         *:LatticeInboxRefresh*
 :LatticeInboxRefresh  Fetch captures from the GitHub inbox
                     repositories in inbox.json.           (<leader>lR)

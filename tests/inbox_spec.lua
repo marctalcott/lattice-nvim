@@ -362,3 +362,139 @@ test("startup: fetches once when a UI is attached, never headless", function()
   eq(calls, { "startup" })
   vim.api.nvim_list_uis, sync.fetch = list_uis, fetch_fn
 end)
+
+-- Removal (A1.6, §12) and recovery (A1.12) -------------------------------------------
+
+local function listed(name, file)
+  for _, c in ipairs(sync.captures()[name] or {}) do
+    if c.file == file then
+      return c
+    end
+  end
+end
+
+local function remove_and_wait(c, kind, note)
+  sync.remove(c, kind, note)
+  IH.wait_removals()
+end
+
+test("remove: git rm, commit and push under the user's identity; the cache follows", function()
+  local root, r = notes(), remote()
+  r.push({
+    ["captures/2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"),
+    ["captures/2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb"),
+    ["README.md"] = "kept",
+  })
+  setup_inbox(root, { { name = "Personal", url = r.url, directory = "captures", notes_root = root } })
+  fetch("manual")
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed", root .. "/Note.md")
+  eq(r.files(), { "README.md", "captures/2026-11-02-000000-bbbbbbbb.md" })
+  eq(r.last_message(), "Lattice: remove processed capture 2026-11-01-000000-aaaaaaaa.md")
+  eq(vim.trim(run({ "git", "log", "-1", "--format=%an <%ae>", "main" }, r.url).stdout), "Lattice Test <test@example.com>")
+  eq(files("Personal"), { "2026-11-02-000000-bbbbbbbb.md" })
+  eq(sync.state.removals, {})
+  -- A later fetch counts nothing new and does not bring it back.
+  fetch("startup")
+  eq(H.last_notify().message, "Lattice Inbox: 0 new captures")
+  eq(files("Personal"), { "2026-11-02-000000-bbbbbbbb.md" })
+end)
+
+test("remove: a push rejected as non-fast-forward is retried after a fetch", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  -- Drafts uploads another capture meanwhile.
+  r.push({ ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed")
+  eq(r.files(), { "2026-11-02-000000-bbbbbbbb.md" })
+  eq(files("Personal"), { "2026-11-02-000000-bbbbbbbb.md" })
+  eq(sync.state.removals, {})
+end)
+
+test("remove: a capture already deleted remotely counts as removed", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"), ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  r.push(nil, { "2026-11-01-000000-aaaaaaaa.md" })
+  vim.notify("sentinel")
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed")
+  eq(sync.state.removals, {})
+  eq(H.last_notify().message, "sentinel")
+  eq(r.files(), { "2026-11-02-000000-bbbbbbbb.md" })
+end)
+
+test("remove: a rejected push leaves the capture filed, removal pending; the next fetch retries", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  r.protect(true)
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed", root .. "/Note.md")
+  local record = sync.state.removals["Personal\0aaaaaaaa"]
+  eq({ record.status, record.kind, record.note }, { "pending", "filed", root .. "/Note.md" })
+  assert(record.error:find("protected branch", 1, true), record.error)
+  eq(H.last_notify().level, vim.log.levels.WARN)
+  assert(H.last_notify().message:find("is filed, but removing it from Personal failed", 1, true), H.last_notify().message)
+  -- The capture is still on the remote and in the cache, and the local
+  -- commit was undone.
+  eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
+  eq(files("Personal"), { "2026-11-01-000000-aaaaaaaa.md" })
+  local status = table.concat(sync.status_lines(), "\n")
+  assert(status:find("removal pending 2026-11-01-000000-aaaaaaaa.md: ", 1, true), status)
+  -- Still refused: still pending after a fetch.
+  fetch("manual")
+  IH.wait_removals()
+  eq(sync.state.removals["Personal\0aaaaaaaa"].status, "pending")
+  -- Allowed again: the next fetch removes it.
+  r.protect(false)
+  fetch("manual")
+  IH.wait_removals()
+  eq(sync.state.removals, {})
+  eq(r.files(), {})
+end)
+
+test("remove: a missing Git identity is explained", function()
+  local message = sync.explain({ code = 128, stderr = "Author identity unknown\n\n*** Please tell me who you are.\n" }, { branch = "main" })
+  assert(message:find("set user.name and user.email", 1, true), message)
+end)
+
+test("recovery: a capture whose ID is in a saved note is not offered again and is removed", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"), ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
+  -- A note filed in an earlier session whose removal never happened (a crash).
+  write(root, "Projects/Etna/Dome.md", "# Dome\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:END:\n\ntext\n")
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  H.reset(root)
+  fetch("startup")
+  -- Only the unfiled capture counts as new.
+  eq(H.last_notify().message, "Lattice Inbox: 1 new capture")
+  local record = sync.state.removals["Personal\0aaaaaaaa"]
+  eq({ record.kind, record.note }, { "filed", root .. "/Projects/Etna/Dome.md" })
+  IH.wait_removals()
+  eq(r.files(), { "2026-11-02-000000-bbbbbbbb.md" })
+  eq(sync.state.removals, {})
+end)
+
+test("recovery: an unsaved buffer or a note in an excluded folder does not count", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  write(root, "Ideas.md", "# Ideas\n")
+  write(root, "Archives/Old.md", "# Old\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:END:\n")
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  H.reset(root)
+  vim.cmd.edit(vim.fn.fnameescape(root .. "/Ideas.md"))
+  vim.api.nvim_buf_set_lines(0, -1, -1, false, { ":PROPERTIES:", ":CAPTURE_ID: aaaaaaaa", ":END:" })
+  fetch("manual")
+  eq(sync.state.removals, {})
+  eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
+  vim.cmd("bwipeout!")
+end)
+
+test("scan: headings record their :CAPTURE_ID:", function()
+  local parsed = H.parse("# Plain\n:PROPERTIES:\n:CAPTURE_ID: abc\n:END:\n## TODO Task\n:PROPERTIES:\n:capture_id: def\n:END:\n# None\n")
+  eq(vim.tbl_map(function(h)
+    return h.capture_id or false
+  end, parsed.headings), { "abc", "def", false })
+end)

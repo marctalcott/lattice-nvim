@@ -100,9 +100,10 @@ Lattice has one notes root per session (`setup({ root = … })`). A repository i
 - **No prompts.** Every git call sets `GIT_TERMINAL_PROMPT=0` and runs detached from the terminal (its own session, with no controlling TTY), so neither git nor ssh can prompt over Neovim's screen; missing credentials fail fast. Lattice does not override `GIT_SSH_COMMAND`, so a user's `core.sshCommand` (often how a work SSH identity is chosen) keeps working.
 - **Credentials.** For HTTPS URLs, Lattice passes `-c credential.useHttpPath=true`, so credential helpers can key credentials per repository.
 - **New captures (§6.2).** A capture is new if its ID was not in that repository's file list before the fetch. On a first clone, every capture counts as new.
-- **Deletion (§12, §8.4.4).** Lattice runs `git rm` on the capture, commits with the message `Lattice: remove processed capture <file>` under the user's Git identity, and pushes.
+- **Deletion (§12, §8.4.4).** Lattice runs `git rm` on the capture, commits with the message `Lattice: remove processed capture <file>` under the user's Git identity, and pushes. The commit and push use `--no-verify`, because the cache is not one of the user's projects and their global hooks should not run there. Operations on one cache run one at a time, so a fetch never overlaps a deletion.
   - If the push is rejected as non-fast-forward (for example, Drafts uploaded something meanwhile), Lattice fetches, resets to `FETCH_HEAD`, repeats the `git rm` and pushes again, up to 3 attempts. A capture that is already gone counts as deleted.
   - Any other rejection, such as branch protection or a permission error, leaves the capture listed as **filed, removal pending**. The error is shown, and the next fetch retries the deletion.
+  - After a failed deletion, the cache is reset to the remote branch, so it lists the capture again. A dismissed capture whose deletion fails returns to the inbox (§12.4).
 - **Errors.** A repository's error (authentication, network, timeout, invalid capture) is recorded against that repository only and shown by `:LatticeInboxStatus`.
 - **Rate limits.** Lattice uses no GitHub REST API on the desktop, so API rate limits do not apply. Git transport limits show up as ordinary fetch errors.
 
