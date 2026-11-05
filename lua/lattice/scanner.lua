@@ -138,7 +138,7 @@ end
 -- Loaded buffers with unsaved changes, by real path: their text is newer
 -- than the file, so Lattice reads them instead (§14.1 "respect unsaved
 -- buffers").
-local function modified_buffers()
+function M.modified_buffers()
   local map = {}
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified and vim.bo[buf].buftype == "" then
@@ -196,7 +196,7 @@ function M.scan(root, cfg)
   if cache.key ~= key then
     cache = { key = key, files = {} }
   end
-  local buffers = modified_buffers()
+  local buffers = M.modified_buffers()
   local seen = {}
   local ids = {} -- :ID: -> first task with it, across notes (§13.4)
   result.inbox = M.list_inbox(root, cfg.inbox.path, unreadable)

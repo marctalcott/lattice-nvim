@@ -47,9 +47,14 @@ local startup_done = false
 -- repaints).
 M.listeners = {}
 
+-- Listener errors are reported here, so they are never mistaken for a
+-- failed fetch or removal.
 local function changed()
   for _, fn in ipairs(M.listeners) do
-    fn()
+    local ok, err = xpcall(fn, debug.traceback)
+    if not ok then
+      vim.notify("Lattice Inbox: could not update the view: " .. tostring(err), vim.log.levels.ERROR)
+    end
   end
 end
 
@@ -160,14 +165,24 @@ local function git(repo, args, cwd, done)
     vim.list_extend(cmd, { "-c", "credential.useHttpPath=true" })
   end
   vim.list_extend(cmd, args)
-  if repo.op then
-    -- An error in a callback ends the locked operation instead of leaving
-    -- its lock held (see with_lock).
+  local op = repo.op
+  if op then
+    -- The lock is held while any git process of the operation runs. After
+    -- a failure, remaining callbacks only release it; an error in a
+    -- callback ends the operation (see with_lock).
+    op.running = op.running + 1
     local inner = done
     done = function(result)
+      op.running = op.running - 1
+      if op.failed then
+        if op.running == 0 then
+          op.release()
+        end
+        return
+      end
       local ok, err = xpcall(inner, debug.traceback, result)
       if not ok then
-        repo.op.fail(err)
+        op.fail(err)
       end
     end
   end
@@ -204,37 +219,105 @@ local function chain(repo, steps, cwd, done)
   step(nil)
 end
 
+-- Cross-process lock: a `<cache dir>.lock` folder holding the owner's PID,
+-- since every Neovim session shares the cache. A lock whose process is gone
+-- (or is this process, which never holds one between operations) is stale.
+M.lock_wait_ms = 120000
+M.lock_retry_ms = 200
+
+local function process_alive(pid)
+  if pid == vim.fn.getpid() then
+    return false
+  end
+  local ok, err = vim.uv.kill(pid, 0)
+  return ok == 0 or (type(err) == "string" and err:find("EPERM", 1, true) ~= nil)
+end
+
+local function take_file_lock(dir)
+  local path = dir .. ".lock"
+  vim.fn.mkdir(vim.fs.dirname(path), "p")
+  for _ = 1, 2 do
+    if vim.uv.fs_mkdir(path, tonumber("700", 8)) then
+      local file = io.open(path .. "/pid", "w")
+      if file then
+        file:write(tostring(vim.fn.getpid()))
+        file:close()
+      end
+      return true
+    end
+    local file = io.open(path .. "/pid", "r")
+    local pid = file and tonumber(file:read("*a"))
+    if file then
+      file:close()
+    end
+    local stat = vim.uv.fs_stat(path)
+    local young = stat and os.time() - stat.mtime.sec < 10
+    -- A lock without a PID yet may be being created right now.
+    if (pid and process_alive(pid)) or (not pid and young) then
+      return false
+    end
+    vim.fn.delete(path, "rf")
+  end
+  return false
+end
+
+local function drop_file_lock(dir)
+  vim.fn.delete(dir .. ".lock", "rf")
+end
+
 -- Operations on a cache folder run one at a time (a fetch and a removal
--- must not share a working tree). `fn(release, op)` calls release() when it
--- is done. A Lua error in `fn`, or in a git callback of a repository bound
--- to `op` (M.bind), is reported, calls `on_error(err)` and releases the
--- lock, so one bug cannot block the repository for the session.
+-- must not share a working tree), within this session and across Neovim
+-- sessions. `fn(release, op)` calls release() when it is done.
+-- `on_error(message)` is called when the operation cannot run or fails
+-- with a Lua error, in `fn` or in a git callback of a repository bound to
+-- `op` (see bind): the error is reported, and the lock is released once no
+-- git process of the operation is still running, so one bug cannot block
+-- the repository.
 local locks = {}
 local function with_lock(dir, fn, on_error)
   local function run(release_next)
-    local released, failed = false, false
+    local released = false
+    local op = { running = 0, failed = false }
     local function release()
       if not released then
         released = true
+        drop_file_lock(dir)
         release_next()
       end
     end
-    local op = {}
+    op.release = release
     function op.fail(err)
-      if failed then
+      if op.failed then
         return
       end
-      failed = true
+      op.failed = true
       notify("Lattice Inbox: internal error: " .. tostring(err), vim.log.levels.ERROR, { title = "Lattice Inbox" })
-      release()
+      if op.running == 0 then
+        release()
+      end
       if on_error then
-        pcall(on_error, err)
+        pcall(on_error, "internal error: " .. vim.split(tostring(err), "\n")[1])
       end
     end
-    local ok, err = xpcall(fn, debug.traceback, release, op)
-    if not ok then
-      op.fail(err)
+    local deadline = vim.uv.now() + M.lock_wait_ms
+    local function start()
+      if not take_file_lock(dir) then
+        if vim.uv.now() < deadline then
+          return vim.defer_fn(start, M.lock_retry_ms)
+        end
+        released = true
+        release_next()
+        if on_error then
+          pcall(on_error, "another Neovim session is using this repository's cache; try :LatticeInboxRefresh later")
+        end
+        return
+      end
+      local ok, err = xpcall(fn, debug.traceback, release, op)
+      if not ok then
+        op.fail(err)
+      end
     end
+    start()
   end
   if locks[dir] then
     table.insert(locks[dir], run)
@@ -256,6 +339,9 @@ end
 local function bind(repo, op)
   return setmetatable({ op = op }, { __index = repo })
 end
+
+-- For tests only.
+M._internal = { with_lock = with_lock, bind = bind, git = git }
 
 -- Parsed captures by path, reused while the file's size and mtime match.
 local parsed = {}
@@ -568,8 +654,8 @@ function M.fetch(mode, on_done)
       end
       with_lock(M.cache_dir(entry.repo), function(release, op)
         sync_repo(bind(entry.repo, op), entry, once, release)
-      end, function(err)
-        entry.status, entry.error = "error", "internal error: " .. vim.split(tostring(err), "\n")[1]
+      end, function(message)
+        entry.status, entry.error = "error", message
         once()
       end)
     end
@@ -707,6 +793,9 @@ function M.remove(capture, kind, note, opts)
         release()
         if result.code == 0 then
           M.state.removals[k] = nil
+          -- If the capture comes back (a re-upload, a reverted commit),
+          -- recovery looks it up again.
+          M.state.checked[k] = nil
           if kind == "dismissed" then
             notify(("Lattice Inbox: dismissed %s"):format(capture.file), nil, { title = "Lattice Inbox" })
           end
@@ -718,26 +807,17 @@ function M.remove(capture, kind, note, opts)
       if result.code == 0 or not vim.uv.fs_stat(dir .. "/.git/HEAD") then
         return finish()
       end
-      -- Undo the local commit so the cache matches the remote again.
-      git(repo, { "reset", "-q", "--hard", "refs/remotes/origin/" .. repo.branch }, dir, finish)
+      -- Undo the local commit so the cache matches the remote again. If
+      -- that fails too, the cache is discarded: the next fetch clones it
+      -- afresh, and until then the capture is not wrongly shown as gone.
+      git(repo, { "reset", "-q", "--hard", "refs/remotes/origin/" .. repo.branch }, dir, function(reset)
+        if reset.code ~= 0 then
+          vim.fn.delete(dir, "rf")
+        end
+        finish()
+      end)
     end)
-  end, function(err)
-    failed("internal error: " .. vim.split(tostring(err), "\n")[1])
-  end)
-end
-
--- Whether a loaded buffer for `path` has unsaved changes.
-local function has_unsaved_buffer(path)
-  local real = vim.uv.fs_realpath(path) or path
-  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
-      local name = vim.api.nvim_buf_get_name(buf)
-      if name ~= "" and (vim.uv.fs_realpath(name) or name) == real then
-        return true
-      end
-    end
-  end
-  return false
+  end, failed)
 end
 
 --- Recovery (A1.12): a listed capture whose ID is already in a saved note
@@ -763,13 +843,15 @@ function M.recover(entries)
   end
   -- One scan per fetch with captures not looked up yet this session; a
   -- capture filed later in the session is recorded by the save itself.
-  local result = require("lattice.scanner").collect(root)
+  local scanner = require("lattice.scanner")
+  local result = scanner.collect(root)
   if result.error then
     return
   end
   for k in pairs(wanted) do
     M.state.checked[k] = true
   end
+  local unsaved = scanner.modified_buffers()
   for _, heading in ipairs(result.outlines or {}) do
     local capture = heading.capture_id
       and heading.capture_repo
@@ -777,7 +859,10 @@ function M.recover(entries)
     -- The scan read unsaved buffers; only those need checking on disk.
     if
       capture
-      and (not has_unsaved_buffer(heading.path) or process.file_has_capture_id(heading.path, capture.id, capture.repo, result.cfg))
+      and (
+        not unsaved[vim.uv.fs_realpath(heading.path) or heading.path]
+        or process.file_has_capture_id(heading.path, capture.id, capture.repo, result.cfg)
+      )
     then
       wanted[M.key(capture)] = nil
       M.state.removals[M.key(capture)] = {
@@ -817,6 +902,7 @@ function M.retry_removals()
           M.remove(listed[k], "filed", record.note, { retry = true })
         else
           M.state.removals[k] = nil
+          M.state.checked[k] = nil
         end
       end
     end

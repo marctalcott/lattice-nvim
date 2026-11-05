@@ -377,7 +377,6 @@ local function on_saved(buf, capture)
   stop_watching()
   vim.notify(("Lattice Inbox: filed as %s"):format(relative(path)))
   sync.remove(capture, "filed", path)
-  M.paint()
 end
 
 -- Opens a new, unsaved note for the capture (A1.2 step 1).
@@ -504,7 +503,6 @@ function M.dismiss()
     return
   end
   sync.remove(capture, "dismissed")
-  M.paint()
 end
 
 function M.refresh()

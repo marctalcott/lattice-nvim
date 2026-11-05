@@ -672,3 +672,134 @@ test("remove: a damaged cache index is a failure, not an already-removed capture
   assert(H.last_notify().message:find("could not dismiss", 1, true), H.last_notify().message)
   eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
 end)
+
+-- Third review: cross-process lock and robustness --------------------------------------
+
+local function other_process(seconds)
+  local proc = vim.system({ "sleep", tostring(seconds) })
+  return proc
+end
+
+test("lock: another live Neovim's lock makes a fetch wait, then give up; a dead one's is broken", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  local repo = inbox_config.load(sync.config_path()).repositories[1]
+  repo.notes_root = root
+  local lock = sync.cache_dir(vim.tbl_extend("force", repo, { branch = "main", directory = "" })) .. ".lock"
+  -- Held by a live process.
+  local live = other_process(30)
+  vim.fn.mkdir(lock, "p")
+  write(lock, "pid", tostring(live.pid))
+  local wait, retry = sync.lock_wait_ms, sync.lock_retry_ms
+  sync.lock_wait_ms, sync.lock_retry_ms = 300, 50
+  fetch("manual")
+  eq(sync.state.repos.Personal.status, "error")
+  assert(sync.state.repos.Personal.error:find("another Neovim session", 1, true), sync.state.repos.Personal.error)
+  eq(vim.uv.fs_stat(lock) ~= nil, true)
+  live:kill(9)
+  live:wait()
+  -- Its process is gone: the lock is stale and is broken.
+  fetch("manual")
+  sync.lock_wait_ms, sync.lock_retry_ms = wait, retry
+  eq(sync.state.repos.Personal.status, "ok")
+  eq(files("Personal"), { "2026-11-01-000000-aaaaaaaa.md" })
+  -- Released after the operation.
+  eq(vim.uv.fs_stat(lock), nil)
+end)
+
+test("lock: after a Lua error, the next operation waits for the running git process", function()
+  local root = notes()
+  setup_inbox(root, {})
+  local internal = sync._internal
+  local dir = notes() .. "/cache-x"
+  vim.fn.mkdir(dir, "p")
+  local marker = dir .. "/git-finished"
+  local repo = { name = "x", url = "/nowhere", branch = "main", directory = "" }
+  local callback_ran, marker_seen = false, nil
+  local restore_notify = vim.notify
+  vim.notify = function() end
+  internal.with_lock(dir, function(_, op)
+    -- A git process that takes a moment and leaves a marker when it ends.
+    internal.git(internal.bind(repo, op), { "-c", "alias.slow=!sleep 0.4 && touch git-finished", "slow" }, dir, function()
+      callback_ran = true
+    end)
+    error("boom after starting git")
+  end)
+  internal.with_lock(dir, function(release)
+    marker_seen = vim.uv.fs_stat(marker) ~= nil
+    release()
+  end)
+  assert(vim.wait(5000, function()
+    return marker_seen ~= nil
+  end, 10))
+  vim.notify = restore_notify
+  -- The next operation started only after the process had finished, and
+  -- the failed operation's callback was skipped.
+  eq(marker_seen, true)
+  eq(callback_ran, false)
+  eq(vim.uv.fs_stat(dir .. ".lock"), nil)
+end)
+
+test("remove: a capture that returns after removal is looked up again", function()
+  local root, r = notes(), remote()
+  local text = capture("aaaaaaaa")
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = text })
+  write(root, "Dome.md", "# Dome\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n")
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  H.reset(root)
+  fetch("manual")
+  IH.wait_removals()
+  eq(r.files(), {})
+  -- Drafts uploads it again.
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = text })
+  fetch("manual")
+  IH.wait_removals()
+  eq(r.files(), {})
+end)
+
+test("remove: if undoing a refused removal fails, the cache is discarded and the removal stays pending", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  local dir = sync.cache_dir(sync.state.repos.Personal.repo)
+  -- The remote refuses the push and, while doing so, breaks the cache's
+  -- remote-tracking ref so the undo (reset --hard) fails.
+  write(r.url, "hooks/pre-receive", ("#!/bin/sh\nrm -f '%s/.git/refs/remotes/origin/main' '%s/.git/packed-refs'\necho protected >&2\nexit 1\n"):format(dir, dir))
+  vim.uv.fs_chmod(r.url .. "/hooks/pre-receive", tonumber("755", 8))
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed", root .. "/Note.md")
+  eq(vim.uv.fs_stat(dir), nil)
+  eq(sync.state.removals["Personal\0aaaaaaaa"].status, "pending")
+  -- The next fetch clones afresh and retries.
+  r.protect(false)
+  fetch("manual")
+  IH.wait_removals()
+  eq(sync.state.removals, {})
+  eq(r.files(), {})
+end)
+
+test("remove: an error in a view listener does not turn a removal into a failure", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  local messages = {}
+  local notify = vim.notify
+  vim.notify = function(message, level)
+    messages[#messages + 1] = message
+    notify(message, level)
+  end
+  table.insert(sync.listeners, function()
+    error("view broke")
+  end)
+  local ok, err = pcall(remove_and_wait, listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "dismissed")
+  table.remove(sync.listeners)
+  vim.notify = notify
+  assert(ok, err)
+  eq(r.files(), {})
+  local text = table.concat(messages, "\n")
+  assert(text:find("dismissed 2026-11-01-000000-aaaaaaaa.md", 1, true), text)
+  assert(not text:find("could not dismiss", 1, true), text)
+  assert(text:find("could not update the view", 1, true), text)
+end)
