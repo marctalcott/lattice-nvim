@@ -290,26 +290,34 @@ function M.note_lines(capture, body, title, keyword)
   return lines
 end
 
---- Whether a note's text has a `:CAPTURE_ID:` property line equal to `id`.
-function M.has_capture_id(text, id)
-  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
-    local value = line:match("^[ \t]*:[Cc][Aa][Pp][Tt][Uu][Rr][Ee]_[Ii][Dd]:[ \t]*(.-)[ \t\r]*$")
-    if value == id then
+--- Whether a note's text has a heading whose property drawer holds
+--- `:CAPTURE_ID: <id>` (and `:CAPTURE_REPO: <repo>`, when `repo` is given).
+--- The note is read as Lattice reads notes, so a drawer-like line in the
+--- body, a quote or a code block does not count.
+--- @param cfg table|nil  .lattice.json config (defaults when nil)
+function M.has_capture_id(text, id, repo, cfg)
+  local lines = vim.split(text, "\n", { plain = true })
+  for i, line in ipairs(lines) do
+    lines[i] = line:gsub("\r$", "")
+  end
+  local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
+  for _, heading in ipairs(parsed and parsed.headings or {}) do
+    if heading.capture_id == id and (repo == nil or heading.capture_repo == repo) then
       return true
     end
   end
   return false
 end
 
---- Whether the file at `path`, as saved on disk, has `id` as a capture ID.
-function M.file_has_capture_id(path, id)
+--- has_capture_id for the file at `path`, as saved on disk.
+function M.file_has_capture_id(path, id, repo, cfg)
   local file = io.open(path, "r")
   if not file then
     return false
   end
   local text = file:read("*a") or ""
   file:close()
-  return M.has_capture_id(text, id)
+  return M.has_capture_id(text, id, repo, cfg)
 end
 
 return M

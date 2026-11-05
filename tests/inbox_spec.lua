@@ -464,7 +464,9 @@ test("recovery: a capture whose ID is in a saved note is not offered again and i
   local root, r = notes(), remote()
   r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"), ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
   -- A note filed in an earlier session whose removal never happened (a crash).
-  write(root, "Projects/Etna/Dome.md", "# Dome\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:END:\n\ntext\n")
+  write(root, "Projects/Etna/Dome.md", "# Dome\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n\ntext\n")
+  -- Same ID, another repository: not a match (it is a different capture).
+  write(root, "Resources/Other.md", "# Other\n:PROPERTIES:\n:CAPTURE_ID: bbbbbbbb\n:CAPTURE_REPO: Work\n:END:\n")
   setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
   H.reset(root)
   fetch("startup")
@@ -481,20 +483,124 @@ test("recovery: an unsaved buffer or a note in an excluded folder does not count
   local root, r = notes(), remote()
   r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
   write(root, "Ideas.md", "# Ideas\n")
-  write(root, "Archives/Old.md", "# Old\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:END:\n")
+  write(root, "Archives/Old.md", "# Old\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n")
   setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
   H.reset(root)
   vim.cmd.edit(vim.fn.fnameescape(root .. "/Ideas.md"))
-  vim.api.nvim_buf_set_lines(0, -1, -1, false, { ":PROPERTIES:", ":CAPTURE_ID: aaaaaaaa", ":END:" })
+  vim.api.nvim_buf_set_lines(0, 1, 1, false, { ":PROPERTIES:", ":CAPTURE_ID: aaaaaaaa", ":CAPTURE_REPO: Personal", ":END:" })
   fetch("manual")
   eq(sync.state.removals, {})
   eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
   vim.cmd("bwipeout!")
 end)
 
-test("scan: headings record their :CAPTURE_ID:", function()
-  local parsed = H.parse("# Plain\n:PROPERTIES:\n:CAPTURE_ID: abc\n:END:\n## TODO Task\n:PROPERTIES:\n:capture_id: def\n:END:\n# None\n")
+test("scan: headings record their :CAPTURE_ID: and :CAPTURE_REPO:", function()
+  local parsed = H.parse(
+    "# Plain\n:PROPERTIES:\n:CAPTURE_ID: abc\n:CAPTURE_REPO: Work\n:END:\n## TODO Task\n:PROPERTIES:\n:capture_id: def\n:END:\n# None\n"
+  )
   eq(vim.tbl_map(function(h)
-    return h.capture_id or false
-  end, parsed.headings), { "abc", "def", false })
+    return { h.capture_id or false, h.capture_repo or false }
+  end, parsed.headings), { { "abc", "Work" }, { "def", false }, { false, false } })
+end)
+
+test("remove: git never acts on a repository above a damaged cache", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  local c = listed("Personal", "2026-11-01-000000-aaaaaaaa.md")
+  -- The cache lost its .git, and the folder above it is someone's repository
+  -- (a home directory kept in Git) with an origin/main and unsaved work.
+  local dir = sync.cache_dir(sync.state.repos.Personal.repo)
+  vim.fn.delete(dir .. "/.git", "rf")
+  local outer = vim.fs.dirname(sync.cache_root)
+  run({ "git", "init", "-q", "-b", "main" }, outer)
+  write(outer, "dotfile", "committed\n")
+  run({ "git", "add", "dotfile" }, outer)
+  run({ "git", "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x" }, outer)
+  run({ "git", "update-ref", "refs/remotes/origin/main", "HEAD" }, outer)
+  write(outer, "dotfile", "unsaved work\n")
+  remove_and_wait(c, "filed")
+  eq(H.read(outer .. "/dotfile"), "unsaved work\n")
+  eq(sync.state.removals["Personal\0aaaaaaaa"].status, "pending")
+  -- Ordinary fetches don't escape the cache either: it is rebuilt.
+  fetch("manual")
+  IH.wait_removals()
+  eq(H.read(outer .. "/dotfile"), "unsaved work\n")
+  eq(r.files(), {})
+end)
+
+test("remove: works when the user's Git config signs commits", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  local gitconfig = notes() .. "/gitconfig"
+  write(vim.fs.dirname(gitconfig), "gitconfig", "[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n")
+  vim.env.GIT_CONFIG_GLOBAL = gitconfig
+  local ok, err = pcall(remove_and_wait, listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed")
+  vim.env.GIT_CONFIG_GLOBAL = "/dev/null"
+  assert(ok, err)
+  eq(sync.state.removals, {})
+  eq(r.files(), {})
+end)
+
+test("remove: a Lua error inside an operation releases the repository", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  local list = sync.list_captures
+  local calls = 0
+  -- On a first fetch, the only call runs in a git callback.
+  sync.list_captures = function(...)
+    calls = calls + 1
+    if calls == 1 then
+      error("boom")
+    end
+    return list(...)
+  end
+  local ok, err = pcall(fetch, "manual")
+  sync.list_captures = list
+  assert(ok, err)
+  eq(sync.state.running, false)
+  eq(sync.state.repos.Personal.status, "error")
+  assert(sync.state.repos.Personal.error:find("internal error", 1, true), sync.state.repos.Personal.error)
+  -- The repository is not stuck: the next fetch and a removal work.
+  fetch("manual")
+  eq(sync.state.repos.Personal.status, "ok")
+  remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed")
+  eq(r.files(), {})
+end)
+
+test("remove: a lasting failure warns once per session; inactive repositories' removals are dropped", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"), ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
+  for _, id in ipairs({ "aaaaaaaa", "bbbbbbbb" }) do
+    write(root, id .. ".md", ("# Note\n:PROPERTIES:\n:CAPTURE_ID: %s\n:CAPTURE_REPO: Personal\n:END:\n"):format(id))
+  end
+  r.protect(true)
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  H.reset(root)
+  local seen = {}
+  local notify = vim.notify
+  vim.notify = function(message, level)
+    if level == vim.log.levels.WARN then
+      seen[#seen + 1] = message
+    end
+    notify(message, level)
+  end
+  fetch("manual")
+  IH.wait_removals()
+  fetch("manual")
+  IH.wait_removals()
+  vim.notify = notify
+  eq(#seen, 1)
+  assert(seen[1]:find("removing filed captures from Personal failed", 1, true), seen[1])
+  eq(#sync.removals_for("Personal"), 2)
+  -- The repository is disabled: its pending removals are dropped.
+  IH.setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root, enabled = false } })
+  sync.state.removals = { ["Personal\0aaaaaaaa"] = { repo = "Personal", id = "aaaaaaaa", file = "x", kind = "filed", status = "pending" } }
+  sync.fetch("manual")
+  sync.retry_removals()
+  eq(sync.state.removals, {})
 end)

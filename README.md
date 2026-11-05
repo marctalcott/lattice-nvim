@@ -481,9 +481,9 @@ Edit it if you like, then save. Saving is what files the capture: close the buff
 
 After the save, Lattice reads the note back from disk and, if it still has the capture's `:CAPTURE_ID:`, removes the capture from GitHub: `git rm`, a commit (`Lattice: remove processed capture <file>`) under your Git identity, and a push. If Drafts uploaded something meanwhile, Lattice fetches and tries again, up to three times. If the push is refused (branch protection, permissions), the capture stays listed as *filed, removal pending* and the next fetch retries.
 
-Lattice keeps no record of its own: the note is the record. At every fetch, a capture whose ID is already in a saved note under the notes root is treated as filed and removed, never offered again. That covers Neovim quitting before the removal finished. Notes in excluded folders such as `Archives/` aren't searched, so file captures before archiving them.
+Lattice keeps no record of its own: the note is the record. At every fetch, a capture whose ID and repository are already in a saved note's property drawer under the notes root is treated as filed and removed, never offered again. That covers Neovim quitting before the removal finished. Notes in excluded folders such as `Archives/` aren't searched, so file captures before archiving them.
 
-The removal commit is made in the cache with `--no-verify` (your Git hooks don't run there). Set `user.name` and `user.email` in your global Git config, or the commit fails and `:LatticeInboxStatus` says so.
+The removal commit is made in the cache with `--no-verify` and without signing (your Git hooks and `commit.gpgsign` don't apply there). Set `user.name` and `user.email` in your global Git config, or the commit fails and `:LatticeInboxStatus` says so.
 
 ## Limitations
 

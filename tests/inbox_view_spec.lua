@@ -147,8 +147,17 @@ test("note lines: heading, capture properties, blank line, text unchanged", func
   eq(process.note_lines(CAPTURE, {}, "Call the Etna team", "TODO")[1], "# TODO Call the Etna team")
   eq(process.has_capture_id(table.concat(process.note_lines(CAPTURE, body, "x"), "\n") .. "\n", "3f1c9a52"), true)
   eq(process.has_capture_id("# x\nno drawer\n", "3f1c9a52"), false)
-  eq(process.has_capture_id("# x\n:CAPTURE_ID: 3f1c9a52-more\n", "3f1c9a52"), false)
-  eq(process.has_capture_id("# a\n:capture_id: other\n# b\n  :CAPTURE_ID:  3f1c9a52 \r\n", "3f1c9a52"), true)
+  local note = table.concat(process.note_lines(CAPTURE, body, "x"), "\n") .. "\n"
+  eq(process.has_capture_id(note, "3f1c9a52", CAPTURE.repo), true)
+  eq(process.has_capture_id(note, "3f1c9a52", "Work"), false)
+  local drawer = ":PROPERTIES:\n:CAPTURE_ID: 3f1c9a52\n:END:\n"
+  eq(process.has_capture_id("# a\r\n:PROPERTIES:\r\n:capture_id:  3f1c9a52 \r\n:END:\r\n", "3f1c9a52"), true)
+  eq(process.has_capture_id("# x\n:PROPERTIES:\n:CAPTURE_ID: 3f1c9a52-more\n:END:\n", "3f1c9a52"), false)
+  -- Only a heading's property drawer counts: not body text, a quote or code.
+  eq(process.has_capture_id("# x\n\nSome text.\n" .. drawer, "3f1c9a52"), false)
+  eq(process.has_capture_id(":CAPTURE_ID: 3f1c9a52\n", "3f1c9a52"), false)
+  eq(process.has_capture_id("# x\n\n```\n# y\n" .. drawer .. "```\n", "3f1c9a52"), false)
+  eq(process.has_capture_id("# x\n\n> :CAPTURE_ID: 3f1c9a52\n", "3f1c9a52"), false)
 end)
 
 test("a filed task note is read by Lattice as a TODO heading with its properties", function()
@@ -544,7 +553,7 @@ end)
 
 test("recovery: a capture already filed in a note shows as filed and cannot be filed again", function()
   local root = para_root()
-  write(root, "Resources/Etna notes.md", "# Etna notes\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:END:\n")
+  write(root, "Resources/Etna notes.md", "# Etna notes\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n")
   -- The remote refuses pushes, so the removal started by the fetch fails.
   local _, r = inbox_with(
     { ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") },
