@@ -630,3 +630,45 @@ test("recovery: the notes are scanned only when a fetch lists a capture not look
   scanner.collect = collect
   eq(scans, 2)
 end)
+
+test("fetch: an error while finishing is reported without blaming a repository or skipping the rest", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  local scanner = H.scanner
+  local collect = scanner.collect
+  scanner.collect = function()
+    error("scan exploded")
+  end
+  local errors = {}
+  local notify = vim.notify
+  vim.notify = function(message, level)
+    if level == vim.log.levels.ERROR then
+      errors[#errors + 1] = message
+    end
+    notify(message, level)
+  end
+  local ok, err = pcall(fetch, "startup")
+  scanner.collect, vim.notify = collect, notify
+  assert(ok, err)
+  eq(sync.state.running, false)
+  eq(sync.state.repos.Personal.status, "ok")
+  eq(#errors, 1)
+  assert(errors[1]:find("recovery failed", 1, true), errors[1])
+  -- The summary still appeared.
+  eq(H.last_notify().message, "Lattice Inbox: 1 new capture")
+end)
+
+test("remove: a damaged cache index is a failure, not an already-removed capture", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  fetch("manual")
+  local c = listed("Personal", "2026-11-01-000000-aaaaaaaa.md")
+  write(sync.cache_dir(sync.state.repos.Personal.repo), ".git/index", "garbage")
+  remove_and_wait(c, "dismissed")
+  eq(sync.state.removals, {})
+  eq(H.last_notify().level, vim.log.levels.WARN)
+  assert(H.last_notify().message:find("could not dismiss", 1, true), H.last_notify().message)
+  eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
+end)

@@ -342,23 +342,39 @@ end
 -- it from GitHub (A1.6).
 local function on_saved(buf, capture)
   local k = key(capture)
-  if sync.removal(capture) then
-    return
-  end
   local path = vim.api.nvim_buf_get_name(buf)
-  if not process.file_has_capture_id(path, capture.id) then
+  local function stop_watching()
+    -- Later saves of the note are ordinary saves.
+    state.pending[k] = nil
+    pcall(vim.api.nvim_del_augroup_by_name, "lattice.inbox.note." .. buf)
+  end
+  local removal = sync.removal(capture)
+  if removal then
+    -- Meanwhile the capture was filed elsewhere (recovery found an older
+    -- note) or dismissed: this note is an extra copy, not a filing.
+    stop_watching()
+    local why = removal.kind == "dismissed" and "was dismissed"
+      or ("was already filed as %s"):format(relative(removal.note))
     vim.notify(
-      ("Lattice Inbox: %s was saved without :CAPTURE_ID: %s, so the capture stays in the inbox"):format(
-        vim.fn.fnamemodify(path, ":~:."),
-        capture.id
-      ),
+      ("Lattice Inbox: the capture %s; %s is a separate copy and the capture was not filed again"):format(why, relative(path)),
       vim.log.levels.WARN
     )
     return
   end
-  state.pending[k] = nil
-  -- Filed: later saves of the note are ordinary saves.
-  pcall(vim.api.nvim_del_augroup_by_name, "lattice.inbox.note." .. buf)
+  local cfg = config.load(config.options.root) or config.defaults()
+  local found, err = process.file_has_capture_id(path, capture.id, capture.repo, cfg)
+  if not found then
+    local message = err
+        and ("Lattice Inbox: %s could not be read back (%s), so the capture stays in the inbox"):format(relative(path), err)
+      or ("Lattice Inbox: %s was saved without :CAPTURE_ID: %s and :CAPTURE_REPO: %s in a property drawer, so the capture stays in the inbox"):format(
+        relative(path),
+        capture.id,
+        capture.repo
+      )
+    vim.notify(message, vim.log.levels.WARN)
+    return
+  end
+  stop_watching()
   vim.notify(("Lattice Inbox: filed as %s"):format(relative(path)))
   sync.remove(capture, "filed", path)
   M.paint()

@@ -577,3 +577,64 @@ test("recovery: a capture already filed in a note shows as filed and cannot be f
   eq(r.files(), {})
   view.close()
 end)
+
+test("file: the saved note must name the capture's repository; a parse failure is reported", function()
+  local root, r = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  cursor_to("Etna")
+  local _, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  local buf = vim.api.nvim_get_current_buf()
+  -- Another repository's drawer: not this capture.
+  vim.api.nvim_buf_set_lines(buf, 5, 6, false, { ":CAPTURE_REPO: Work" })
+  vim.cmd("silent write")
+  assert(H.last_notify().message:find("saved without :CAPTURE_ID: aaaaaaaa and :CAPTURE_REPO: Personal", 1, true), H.last_notify().message)
+  eq(sync.state.removals, {})
+  -- The note can't be parsed back.
+  vim.api.nvim_buf_set_lines(buf, 5, 6, false, { ":CAPTURE_REPO: Personal" })
+  local tasks = require("lattice.tasks")
+  local parse = tasks.parse
+  tasks.parse = function()
+    return nil, "no Markdown parser"
+  end
+  vim.cmd("silent write")
+  tasks.parse = parse
+  eq(H.last_notify().message, "Lattice Inbox: Resources/Etna notes.md could not be read back (no Markdown parser), so the capture stays in the inbox")
+  eq(sync.state.removals, {})
+  -- Fixed: the next save files it.
+  vim.cmd("silent write")
+  eq(H.last_notify().message, "Lattice Inbox: filed as Resources/Etna notes.md")
+  IH.wait_removals()
+  eq(r.files(), {})
+end)
+
+test("file: saving after the capture was recovered from another note warns and does not file it again", function()
+  local root = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  cursor_to("Etna")
+  local _, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  local buf = vim.api.nvim_get_current_buf()
+  -- Meanwhile a fetch found an older note for this capture.
+  sync.state.removals["Personal\0aaaaaaaa"] = {
+    repo = "Personal",
+    id = "aaaaaaaa",
+    file = "2026-11-05-074500-aaaaaaaa.md",
+    kind = "filed",
+    note = root .. "/Projects/Etna/Older.md",
+    status = "pending",
+  }
+  vim.cmd("silent write")
+  eq(
+    H.last_notify().message,
+    "Lattice Inbox: the capture was already filed as Projects/Etna/Older.md; Resources/Etna notes.md is a separate copy and the capture was not filed again"
+  )
+  eq(view.state.pending["Personal\0aaaaaaaa"], nil)
+  -- Later saves are ordinary saves.
+  vim.notify("sentinel")
+  vim.api.nvim_buf_call(buf, function()
+    vim.cmd("silent write")
+  end)
+  eq(H.last_notify().message, "sentinel")
+  sync.state.removals = {}
+end)

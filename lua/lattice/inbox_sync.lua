@@ -59,10 +59,6 @@ function M.key(capture)
   return capture.repo .. "\0" .. (capture.id or capture.file)
 end
 
-local function removals()
-  return M.state.removals
-end
-
 --- The removal in progress or pending for a capture, or nil.
 function M.removal(capture)
   return M.state.removals[M.key(capture)]
@@ -436,7 +432,7 @@ end
 local function new_count(entry)
   local count = 0
   for _, capture in ipairs(entry.captures or {}) do
-    if (entry.new_files or {})[capture.file] and not removals()[M.key(capture)] then
+    if (entry.new_files or {})[capture.file] and not M.state.removals[M.key(capture)] then
       count = count + 1
     end
   end
@@ -539,18 +535,26 @@ function M.fetch(mode, on_done)
       local function on_repo_done()
         running, finished = running - 1, finished + 1
         if finished == #active then
-          M.state.running = false
-          M.recover(active)
-          summary(mode, active)
-          M.retry_removals()
-          changed()
-          if on_done then
-            on_done()
-          end
-          if queued_rerun then
-            queued_rerun = false
-            M.fetch("manual")
-          end
+          -- Completion runs on its own, not inside the last repository's
+          -- git callback, so an error here is not blamed on that
+          -- repository and does not skip the rest.
+          vim.schedule(function()
+            M.state.running = false
+            local ok, err = xpcall(M.recover, debug.traceback, active)
+            if not ok then
+              notify("Lattice Inbox: recovery failed: " .. tostring(err), vim.log.levels.ERROR, { title = "Lattice Inbox" })
+            end
+            summary(mode, active)
+            M.retry_removals()
+            changed()
+            if queued_rerun then
+              queued_rerun = false
+              M.fetch("manual")
+            end
+            if on_done then
+              on_done()
+            end
+          end)
         else
           launch()
         end
@@ -592,7 +596,10 @@ local function remove_file(repo, dir, file, done)
     attempt = attempt + 1
     git(repo, { "ls-files", "--error-unmatch", "--", rel }, dir, function(listed)
       if listed.code ~= 0 then
-        return done({ code = 0 })
+        -- Already gone only if git says so; a lock or a damaged index is a
+        -- failure, not a removal.
+        local gone = (listed.stderr or ""):find("did not match any file", 1, true)
+        return done(gone and { code = 0 } or listed)
       end
       chain(repo, {
         { "rm", "-q", "--", rel },
@@ -629,7 +636,7 @@ end
 function M.remove(capture, kind, note, opts)
   opts = opts or {}
   local k = M.key(capture)
-  local record = removals()[k]
+  local record = M.state.removals[k]
   if record and record.status == "removing" then
     return
   end
@@ -637,13 +644,13 @@ function M.remove(capture, kind, note, opts)
   record.repo, record.id, record.file, record.kind = capture.repo, capture.id, capture.file, kind
   record.note = note or record.note
   record.status, record.error = "removing", nil
-  removals()[k] = record
+  M.state.removals[k] = record
   changed()
 
   local entry = M.state.repos[capture.repo]
   local function failed(message)
     if kind == "dismissed" then
-      removals()[k] = nil
+      M.state.removals[k] = nil
       notify(
         ("Lattice Inbox: could not dismiss %s from %s: %s. It stays in the inbox."):format(capture.file, capture.repo, message),
         vim.log.levels.WARN,
@@ -699,7 +706,7 @@ function M.remove(capture, kind, note, opts)
         end
         release()
         if result.code == 0 then
-          removals()[k] = nil
+          M.state.removals[k] = nil
           if kind == "dismissed" then
             notify(("Lattice Inbox: dismissed %s"):format(capture.file), nil, { title = "Lattice Inbox" })
           end
@@ -719,6 +726,20 @@ function M.remove(capture, kind, note, opts)
   end)
 end
 
+-- Whether a loaded buffer for `path` has unsaved changes.
+local function has_unsaved_buffer(path)
+  local real = vim.uv.fs_realpath(path) or path
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= "" and (vim.uv.fs_realpath(name) or name) == real then
+        return true
+      end
+    end
+  end
+  return false
+end
+
 --- Recovery (A1.12): a listed capture whose ID is already in a saved note
 --- under the notes root was filed earlier (a crash, a failed removal, or a
 --- second filing). It is marked filed, removal pending, so it is not offered
@@ -731,7 +752,7 @@ function M.recover(entries)
   for _, entry in ipairs(entries) do
     for _, capture in ipairs(entry.captures or {}) do
       local k = M.key(capture)
-      if capture.id and not removals()[k] and not M.state.checked[k] then
+      if capture.id and not M.state.removals[k] and not M.state.checked[k] then
         wanted[k] = capture
       end
     end
@@ -752,10 +773,14 @@ function M.recover(entries)
   for _, heading in ipairs(result.outlines or {}) do
     local capture = heading.capture_id
       and heading.capture_repo
-      and wanted[heading.capture_repo .. "\0" .. heading.capture_id]
-    if capture and process.file_has_capture_id(heading.path, capture.id, capture.repo, result.cfg) then
+      and wanted[M.key({ repo = heading.capture_repo, id = heading.capture_id })]
+    -- The scan read unsaved buffers; only those need checking on disk.
+    if
+      capture
+      and (not has_unsaved_buffer(heading.path) or process.file_has_capture_id(heading.path, capture.id, capture.repo, result.cfg))
+    then
       wanted[M.key(capture)] = nil
-      removals()[M.key(capture)] = {
+      M.state.removals[M.key(capture)] = {
         repo = capture.repo,
         id = capture.id,
         file = capture.file,
@@ -781,17 +806,17 @@ function M.retry_removals()
       end
     end
   end
-  for k, record in pairs(removals()) do
+  for k, record in pairs(M.state.removals) do
     local entry = M.state.repos[record.repo]
     if record.status == "pending" then
       if not (entry and entry.role == "active") then
-        removals()[k] = nil
+        M.state.removals[k] = nil
         M.state.checked[k] = nil
       elseif entry.status == "ok" then
         if listed[k] then
           M.remove(listed[k], "filed", record.note, { retry = true })
         else
-          removals()[k] = nil
+          M.state.removals[k] = nil
         end
       end
     end
@@ -801,7 +826,7 @@ end
 --- Removals for a repository, sorted by file.
 function M.removals_for(name)
   local out = {}
-  for _, record in pairs(removals()) do
+  for _, record in pairs(M.state.removals) do
     if record.repo == name then
       out[#out + 1] = record
     end

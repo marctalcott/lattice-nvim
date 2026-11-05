@@ -294,14 +294,19 @@ end
 --- `:CAPTURE_ID: <id>` (and `:CAPTURE_REPO: <repo>`, when `repo` is given).
 --- The note is read as Lattice reads notes, so a drawer-like line in the
 --- body, a quote or a code block does not count.
+--- Returns false and an error message when the note cannot be parsed.
 --- @param cfg table|nil  .lattice.json config (defaults when nil)
+--- @return boolean, string|nil
 function M.has_capture_id(text, id, repo, cfg)
   local lines = vim.split(text, "\n", { plain = true })
   for i, line in ipairs(lines) do
     lines[i] = line:gsub("\r$", "")
   end
-  local parsed = require("lattice.tasks").parse(lines, cfg or require("lattice.config").defaults())
-  for _, heading in ipairs(parsed and parsed.headings or {}) do
+  local ok, parsed, err = pcall(require("lattice.tasks").parse, lines, cfg or require("lattice.config").defaults())
+  if not ok or not parsed then
+    return false, tostring(ok and err or parsed)
+  end
+  for _, heading in ipairs(parsed.headings) do
     if heading.capture_id == id and (repo == nil or heading.capture_repo == repo) then
       return true
     end
@@ -311,9 +316,9 @@ end
 
 --- has_capture_id for the file at `path`, as saved on disk.
 function M.file_has_capture_id(path, id, repo, cfg)
-  local file = io.open(path, "r")
+  local file, open_err = io.open(path, "r")
   if not file then
-    return false
+    return false, open_err
   end
   local text = file:read("*a") or ""
   file:close()
