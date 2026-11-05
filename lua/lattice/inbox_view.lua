@@ -44,6 +44,21 @@ local function relative(path)
   return path and (config.relative(path)) or "?"
 end
 
+-- Tells the user why a capture being removed can't be filed or dismissed.
+-- Returns true when it is being removed.
+local function removal_notice(capture)
+  local removal = sync.removal(capture)
+  if not removal then
+    return false
+  end
+  if removal.kind == "dismissed" then
+    vim.notify("Lattice Inbox: this capture is being dismissed")
+  else
+    vim.notify(("Lattice Inbox: already filed as %s; R retries its removal"):format(relative(removal.note)))
+  end
+  return true
+end
+
 --- Asks before dismissing (§12.4). Overridable for tests.
 function M.confirm(message)
   return vim.fn.confirm(message, "&Dismiss\n&Cancel", 2, "Question") == 1
@@ -432,13 +447,7 @@ function M.process(kind)
     return
   end
   local k = key(capture)
-  local removal = sync.removal(capture)
-  if removal then
-    if removal.kind == "dismissed" then
-      vim.notify("Lattice Inbox: this capture is being dismissed")
-    else
-      vim.notify(("Lattice Inbox: already filed as %s; R retries its removal"):format(relative(removal.note)))
-    end
+  if removal_notice(capture) then
     return
   end
   local pending = state.pending[k]
@@ -486,11 +495,7 @@ function M.dismiss()
     return
   end
   local k = key(capture)
-  local removal = sync.removal(capture)
-  if removal then
-    if removal.kind == "filed" then
-      vim.notify(("Lattice Inbox: already filed as %s; R retries its removal"):format(relative(removal.note)))
-    end
+  if removal_notice(capture) then
     return
   end
   local pending = state.pending[k]

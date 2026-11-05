@@ -502,6 +502,10 @@ test("dismiss: asks first; cancelling keeps the capture, confirming deletes it r
   asked, restore = confirming(true)
   view.dismiss()
   assert(H.dashboard_text():find("Etna notes  · dismissing…", 1, true), H.dashboard_text())
+  -- Pressing D again while it runs says so.
+  view.dismiss()
+  eq(H.last_notify().message, "Lattice Inbox: this capture is being dismissed")
+  eq(#asked, 1)
   IH.wait_removals()
   eq(r.files(), { "noid.md" })
   eq(H.last_notify().message, "Lattice Inbox: dismissed 2026-11-05-074500-aaaaaaaa.md")

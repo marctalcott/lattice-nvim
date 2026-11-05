@@ -496,6 +496,12 @@ test("recovery: an unsaved buffer or a note in an excluded folder does not count
   fetch("manual")
   eq(sync.state.removals, {})
   eq(r.files(), { "2026-11-01-000000-aaaaaaaa.md" })
+  -- Once the user saves that note, the next fetch finds it: the capture
+  -- was not marked as looked up while only the buffer had the ID.
+  vim.cmd("silent write")
+  fetch("manual")
+  IH.wait_removals()
+  eq(r.files(), {})
   vim.cmd("bwipeout!")
 end)
 
@@ -760,7 +766,7 @@ end)
 
 test("remove: if undoing a refused removal fails, the cache is discarded and the removal stays pending", function()
   local root, r = notes(), remote()
-  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa"), ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
   setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
   fetch("manual")
   local dir = sync.cache_dir(sync.state.repos.Personal.repo)
@@ -771,12 +777,15 @@ test("remove: if undoing a refused removal fails, the cache is discarded and the
   remove_and_wait(listed("Personal", "2026-11-01-000000-aaaaaaaa.md"), "filed", root .. "/Note.md")
   eq(vim.uv.fs_stat(dir), nil)
   eq(sync.state.removals["Personal\0aaaaaaaa"].status, "pending")
-  -- The next fetch clones afresh and retries.
+  -- The inbox still lists what the cache held.
+  eq(files("Personal"), { "2026-11-01-000000-aaaaaaaa.md", "2026-11-02-000000-bbbbbbbb.md" })
+  -- The next fetch clones afresh, announces nothing as new, and retries.
   r.protect(false)
-  fetch("manual")
+  fetch("startup")
+  eq(H.last_notify().message, "Lattice Inbox: 0 new captures")
   IH.wait_removals()
   eq(sync.state.removals, {})
-  eq(r.files(), {})
+  eq(r.files(), { "2026-11-02-000000-bbbbbbbb.md" })
 end)
 
 test("remove: an error in a view listener does not turn a removal into a failure", function()
@@ -802,4 +811,58 @@ test("remove: an error in a view listener does not turn a removal into a failure
   assert(text:find("dismissed 2026-11-01-000000-aaaaaaaa.md", 1, true), text)
   assert(not text:find("could not dismiss", 1, true), text)
   assert(text:find("could not update the view", 1, true), text)
+end)
+
+-- Fourth review ---------------------------------------------------------------------
+
+test("lock: breaking a stale lock is itself locked; a lock not refreshed for 10 minutes is stale", function()
+  local take = sync._internal.take_file_lock
+  local dir = notes() .. "/cache-y"
+  local lock, breaker = dir .. ".lock", dir .. ".lock.break"
+  local function stale_lock(pid)
+    vim.fn.mkdir(lock, "p")
+    write(lock, "pid", tostring(pid))
+  end
+  local function take_within(tries)
+    for _ = 1, tries do
+      if take(dir) then
+        return true
+      end
+    end
+    return false
+  end
+  local dead = vim.system({ "true" })
+  dead:wait()
+  -- Another session is breaking it right now: leave it alone.
+  stale_lock(dead.pid)
+  vim.fn.mkdir(breaker, "p")
+  eq(take_within(3), false)
+  eq(vim.uv.fs_stat(lock) ~= nil, true)
+  -- That session crashed mid-break: its old breaker is cleared, then the
+  -- stale lock is broken and taken.
+  local past = os.time() - 60
+  vim.uv.fs_utime(breaker, past, past)
+  eq(take_within(3), true)
+  eq(vim.uv.fs_stat(breaker), nil)
+  eq(H.read(lock .. "/pid"), tostring(vim.fn.getpid()))
+  vim.fn.delete(lock, "rf")
+  -- A live PID, but not refreshed for over 10 minutes (the PID was reused).
+  local live = vim.system({ "sleep", "30" })
+  stale_lock(live.pid)
+  eq(take_within(3), false)
+  past = os.time() - sync.lock_stale_s - 1
+  vim.uv.fs_utime(lock, past, past)
+  eq(take_within(3), true)
+  live:kill(9)
+  vim.fn.delete(lock, "rf")
+end)
+
+test("explain: a push still rejected as non-fast-forward is not called a refusal", function()
+  local message = sync.explain({
+    code = 1,
+    stderr = " ! [rejected]        HEAD -> main (fetch first)\nerror: failed to push some refs to 'x'\n",
+  }, { branch = "main" })
+  assert(message:find("the branch kept changing during 3 attempts; the next fetch retries", 1, true), message)
+  message = sync.explain({ code = 1, stderr = "remote: protected branch\n ! [remote rejected] HEAD -> main (pre-receive hook declined)\n" }, { branch = "main" })
+  assert(message:find("the repository refused the push (protected branch)", 1, true), message)
 end)

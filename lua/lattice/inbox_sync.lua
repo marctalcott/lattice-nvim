@@ -118,7 +118,11 @@ function M.explain(result, repo)
       end
     end
     last = #said > 0 and table.concat(said, " ") or vim.trim(stderr:match("[^\n]*rejected%][^\n]*") or last or "")
-    reason = "the repository refused the push"
+    if lower:find("fetch first", 1, true) or lower:find("non-fast-forward", 1, true) then
+      reason = ("the branch kept changing during %d attempts; the next fetch retries"):format(M.max_push_attempts)
+    else
+      reason = "the repository refused the push"
+    end
   elseif lower:find("please tell me who you are", 1, true) or lower:find("unable to auto-detect email", 1, true) then
     reason = "Git has no identity for the removal commit; set user.name and user.email with git config --global"
   elseif lower:find("host key verification failed", 1, true) then
@@ -171,6 +175,11 @@ local function git(repo, args, cwd, done)
     -- a failure, remaining callbacks only release it; an error in a
     -- callback ends the operation (see with_lock).
     op.running = op.running + 1
+    if op.lock then
+      -- Still alive: keep the cross-session lock fresh.
+      local now = os.time()
+      vim.uv.fs_utime(op.lock, now, now)
+    end
     local inner = done
     done = function(result)
       op.running = op.running - 1
@@ -220,10 +229,14 @@ local function chain(repo, steps, cwd, done)
 end
 
 -- Cross-process lock: a `<cache dir>.lock` folder holding the owner's PID,
--- since every Neovim session shares the cache. A lock whose process is gone
--- (or is this process, which never holds one between operations) is stale.
+-- since every Neovim session shares the cache. The owner refreshes its
+-- time whenever it starts a git process. A lock is stale when its process
+-- is gone, when it is this process (which never holds one between
+-- operations), or when it has not been refreshed for lock_stale_s (its PID
+-- may since belong to an unrelated program, after a reboot).
 M.lock_wait_ms = 120000
 M.lock_retry_ms = 200
+M.lock_stale_s = 600
 
 local function process_alive(pid)
   if pid == vim.fn.getpid() then
@@ -233,31 +246,56 @@ local function process_alive(pid)
   return ok == 0 or (type(err) == "string" and err:find("EPERM", 1, true) ~= nil)
 end
 
+local function lock_is_stale(path)
+  local stat = vim.uv.fs_stat(path)
+  if not stat then
+    return false
+  end
+  local age = os.time() - stat.mtime.sec
+  if age >= M.lock_stale_s then
+    return true
+  end
+  local file = io.open(path .. "/pid", "r")
+  local pid = file and tonumber(file:read("*a"))
+  if file then
+    file:close()
+  end
+  if not pid then
+    -- A lock without a PID yet may be being created right now.
+    return age >= 10
+  end
+  return not process_alive(pid)
+end
+
 local function take_file_lock(dir)
   local path = dir .. ".lock"
   vim.fn.mkdir(vim.fs.dirname(path), "p")
-  for _ = 1, 2 do
-    if vim.uv.fs_mkdir(path, tonumber("700", 8)) then
-      local file = io.open(path .. "/pid", "w")
-      if file then
-        file:write(tostring(vim.fn.getpid()))
-        file:close()
-      end
-      return true
-    end
-    local file = io.open(path .. "/pid", "r")
-    local pid = file and tonumber(file:read("*a"))
+  if vim.uv.fs_mkdir(path, tonumber("700", 8)) then
+    local file = io.open(path .. "/pid", "w")
     if file then
+      file:write(tostring(vim.fn.getpid()))
       file:close()
     end
-    local stat = vim.uv.fs_stat(path)
-    local young = stat and os.time() - stat.mtime.sec < 10
-    -- A lock without a PID yet may be being created right now.
-    if (pid and process_alive(pid)) or (not pid and young) then
-      return false
+    return true
+  end
+  if not lock_is_stale(path) then
+    return false
+  end
+  -- Breaking a stale lock is itself locked, and staleness is checked again
+  -- inside, so two sessions never both break it (one would delete the
+  -- lock the other just took). The caller retries afterwards.
+  local breaker = path .. ".break"
+  if not vim.uv.fs_mkdir(breaker, tonumber("700", 8)) then
+    local stat = vim.uv.fs_stat(breaker)
+    if stat and os.time() - stat.mtime.sec >= 10 then
+      vim.fn.delete(breaker, "rf") -- left by a crash mid-break
     end
+    return false
+  end
+  if lock_is_stale(path) then
     vim.fn.delete(path, "rf")
   end
+  vim.fn.delete(breaker, "rf")
   return false
 end
 
@@ -277,7 +315,7 @@ local locks = {}
 local function with_lock(dir, fn, on_error)
   local function run(release_next)
     local released = false
-    local op = { running = 0, failed = false }
+    local op = { running = 0, failed = false, lock = dir .. ".lock" }
     local function release()
       if not released then
         released = true
@@ -341,7 +379,7 @@ local function bind(repo, op)
 end
 
 -- For tests only.
-M._internal = { with_lock = with_lock, bind = bind, git = git }
+M._internal = { with_lock = with_lock, bind = bind, git = git, take_file_lock = take_file_lock }
 
 -- Parsed captures by path, reused while the file's size and mtime match.
 local parsed = {}
@@ -468,6 +506,12 @@ local function sync_repo(repo, entry, done, release)
   local dir = M.cache_dir(repo)
   local had_cache = vim.uv.fs_stat(dir .. "/.git/HEAD") ~= nil
   local before = had_cache and file_set((M.list_captures(repo, dir))) or {}
+  if not had_cache and entry.discarded then
+    -- The cache was discarded this session (a failed undo): what it listed
+    -- is not new.
+    before = file_set(entry.captures or {})
+  end
+  entry.discarded = nil
   -- Captures a removal's retry fetched have not been announced yet.
   for file in pairs(entry.unannounced or {}) do
     before[file] = nil
@@ -778,10 +822,16 @@ function M.remove(capture, kind, note, opts)
   with_lock(dir, function(release, op)
     local repo = bind(entry.repo, op)
     remove_file(repo, dir, capture.file, function(result)
-      local function finish()
+      local function finish(discarded)
         local current = M.state.repos[capture.repo] or entry
         local had = file_set(current.captures or {})
-        current.captures, current.skipped = M.list_captures(repo, dir)
+        if discarded then
+          -- Keep showing what the cache listed until the next fetch clones
+          -- it afresh.
+          current.discarded = true
+        else
+          current.captures, current.skipped = M.list_captures(repo, dir)
+        end
         -- A retry fetches; captures it brought in count as new at the next
         -- fetch.
         current.unannounced = current.unannounced or {}
@@ -814,7 +864,7 @@ function M.remove(capture, kind, note, opts)
         if reset.code ~= 0 then
           vim.fn.delete(dir, "rf")
         end
-        finish()
+        finish(reset.code ~= 0)
       end)
     end)
   end, failed)
@@ -848,23 +898,26 @@ function M.recover(entries)
   if result.error then
     return
   end
-  for k in pairs(wanted) do
-    M.state.checked[k] = true
-  end
   local unsaved = scanner.modified_buffers()
+  -- Captures whose note is open with unsaved changes that disagree with
+  -- the disk are looked up again at the next fetch.
+  local unconfirmed = {}
   for _, heading in ipairs(result.outlines or {}) do
     local capture = heading.capture_id
       and heading.capture_repo
       and wanted[M.key({ repo = heading.capture_repo, id = heading.capture_id })]
     -- The scan read unsaved buffers; only those need checking on disk.
-    if
-      capture
+    local confirmed = capture
       and (
         not unsaved[vim.uv.fs_realpath(heading.path) or heading.path]
         or process.file_has_capture_id(heading.path, capture.id, capture.repo, result.cfg)
       )
-    then
+    if capture and not confirmed then
+      unconfirmed[M.key(capture)] = true
+    end
+    if confirmed then
       wanted[M.key(capture)] = nil
+      M.state.checked[M.key(capture)] = true
       M.state.removals[M.key(capture)] = {
         repo = capture.repo,
         id = capture.id,
@@ -873,6 +926,27 @@ function M.recover(entries)
         note = heading.path,
         status = "pending",
       }
+    end
+  end
+  -- The scan saw unsaved buffers, not their files: a capture ID still
+  -- found on disk under such a buffer is left for the next fetch too.
+  for path in pairs(unsaved) do
+    local file = io.open(path, "r")
+    local text = file and file:read("*a")
+    if file then
+      file:close()
+    end
+    if text then
+      for k, capture in pairs(wanted) do
+        if text:find(capture.id, 1, true) then
+          unconfirmed[k] = true
+        end
+      end
+    end
+  end
+  for k in pairs(wanted) do
+    if not unconfirmed[k] then
+      M.state.checked[k] = true
     end
   end
 end
