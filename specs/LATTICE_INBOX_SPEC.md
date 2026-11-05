@@ -55,7 +55,7 @@ the project notes when I get back to my computer.
 
 ### A1.4 Configuration file (PO, 2026-11-05 — a new persistent format, approved)
 
-- Location: `~/.config/lattice/inbox.json`, overridable with `setup({ inbox_sync = { config = "<path>" } })`.
+- Location: `~/.config/lattice/inbox.json` (`$XDG_CONFIG_HOME/lattice/inbox.json` when that is set), overridable with `setup({ inbox_sync = { config = "<path>" } })`.
 - The format is **JSON, not TOML**. Neovim parses JSON natively (`vim.json`), and `.lattice.json` already uses it. TOML would need a hand-written parser or a new dependency. The keys are those of §5.2:
 
 ```json
@@ -97,7 +97,7 @@ Lattice has one notes root per session (`setup({ root = … })`). A repository i
 
 - **Cache.** Each active repository has a shallow clone at `stdpath("cache")/lattice/inbox/<name>-<8 hex of sha256(url)>`, checked out with sparse-checkout limited to `directory`. The clone is the cache (§7). It is disposable: if it is missing or damaged, Lattice deletes and re-clones it. It is never the only copy of an unprocessed capture, because the capture stays on GitHub until deletion succeeds.
 - **Fetch.** Lattice runs `git fetch --depth 1 origin <branch>`, then `git reset --hard FETCH_HEAD`, using `vim.system` asynchronously. It processes at most 4 repositories at once and gives each command a 30-second timeout. Unchanged repositories download nothing.
-- **No prompts.** Every git call sets `GIT_TERMINAL_PROMPT=0` and `GIT_SSH_COMMAND="ssh -o BatchMode=yes"`, so missing credentials fail fast instead of waiting behind the UI.
+- **No prompts.** Every git call sets `GIT_TERMINAL_PROMPT=0` and runs detached from the terminal (its own session, with no controlling TTY), so neither git nor ssh can prompt over Neovim's screen; missing credentials fail fast. Lattice does not override `GIT_SSH_COMMAND`, so a user's `core.sshCommand` (often how a work SSH identity is chosen) keeps working.
 - **Credentials.** For HTTPS URLs, Lattice passes `-c credential.useHttpPath=true`, so credential helpers can key credentials per repository.
 - **New captures (§6.2).** A capture is new if its ID was not in that repository's file list before the fetch. On a first clone, every capture counts as new.
 - **Deletion (§12, §8.4.4).** Lattice runs `git rm` on the capture, commits with the message `Lattice: remove processed capture <file>` under the user's Git identity, and pushes.

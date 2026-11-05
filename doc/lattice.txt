@@ -225,6 +225,11 @@ default. Both change buffers only; both notes are checked first.
                                                            *:LatticePrevState*
 :LatticePrevState   Previous state of the item.           (<leader>lp)
                                                               *:LatticeHealth*
+                                                        *:LatticeInboxRefresh*
+:LatticeInboxRefresh  Fetch captures from the GitHub inbox
+                    repositories in inbox.json.           (<leader>lR)
+                                                         *:LatticeInboxStatus*
+:LatticeInboxStatus Show each inbox repository's status.
 :LatticeHealth      Same as `:checkhealth lattice`.
 
 If a default key already has a global mapping, Lattice keeps your mapping,

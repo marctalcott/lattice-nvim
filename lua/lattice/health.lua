@@ -96,6 +96,10 @@ function M.check()
   for _, item in ipairs(M.report(scanner.collect(config.options.root))) do
     health[item.level](item.message)
   end
+  health.start("lattice inbox")
+  for _, item in ipairs(require("lattice.inbox_sync").health_items()) do
+    health[item.level](item.message)
+  end
 end
 
 return M

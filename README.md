@@ -326,9 +326,11 @@ Both work on the heading under the cursor and everything below it (its subtree),
 | `:LatticeMigrate`    |              | Convert this note's v0.1 items to Org headings          |
 | `:LatticeRefile`     | `<leader>lw` | Move the subtree under another heading                  |
 | `:LatticeArchive`    | `<leader>lA` | Move the subtree to the archive note                    |
+| `:LatticeInboxRefresh` | `<leader>lR` | Fetch captures from the GitHub inbox repositories ([GitHub capture inbox](#github-capture-inbox)) |
+| `:LatticeInboxStatus` |             | Show each inbox repository's sync status                |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
-Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate`, `refile`, `archive` and `health`.
+Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate`, `refile`, `archive`, `inbox_refresh`, `inbox_status` and `health`.
 
 Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
 
@@ -426,6 +428,30 @@ For notes captured away from your Mac, such as in Drafts on iPhone, copy the Mar
 When the folder exists, the dashboard's INBOX group lists each `.md` file in it, including subfolders, oldest first. Each entry shows the file's first line as its title and the file's modified date. `Enter` opens the capture. Lattice never moves or edits captures. Once you file a note into its PARA location, it leaves the list at the next refresh.
 
 `scan.exclude` doesn't affect this list. Tasks in inbox notes count like any others, so add `Inbox/**` to `scan.exclude` if you'd rather keep them off the dashboard until the note is filed.
+
+## GitHub capture inbox
+
+*In progress: Lattice fetches captures; the inbox view and filing come next ([spec](specs/LATTICE_INBOX_SPEC.md)).*
+
+The [Send to GitHub](drafts/README.md) Drafts action uploads captures from your iPhone to private GitHub repositories. Lattice fetches them when Neovim starts, if `~/.config/lattice/inbox.json` exists. Without that file Lattice makes no network access.
+
+```json
+{
+  "inbox": { "auto_fetch": true, "notification_duration_ms": 3000 },
+  "repositories": [
+    { "name": "Personal", "url": "git@github.com:personal-user/lattice-inbox.git",
+      "branch": "main", "directory": "captures", "notes_root": "~/Notes/Personal" },
+    { "name": "Work", "url": "git@github-work:work-org/lattice-inbox.git",
+      "directory": "captures", "notes_root": "~/Notes/Work" }
+  ]
+}
+```
+
+- Only repositories whose `notes_root` is the notes root you passed to `setup` are fetched, so work captures stay with work notes. Set `"enabled": false` to skip one.
+- At startup a notification shows how many new captures arrived, including `0 new captures`. `:LatticeInboxRefresh` (`<leader>lR`) fetches again and stays quiet unless something fails. `:LatticeInboxStatus` shows each repository's state and last error.
+- Lattice uses your own Git authentication and never prompts. To keep two github.com accounts apart, give the work one an SSH host alias (`Host github-work` with its own `IdentityFile` in `~/.ssh/config`) and use it in `url`. Don't put tokens in `url`; Lattice rejects them.
+- Each repository is mirrored in a shallow clone under `stdpath("cache")/lattice/inbox`, which can be deleted at any time. Captures stay on GitHub until they're processed.
+- Use another config path with `setup({ inbox_sync = { config = "~/path/inbox.json" } })`.
 
 ## Limitations
 
