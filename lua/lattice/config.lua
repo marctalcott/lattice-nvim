@@ -20,6 +20,7 @@ local DEFAULT_KEYMAPS = {
   priority_down = "<leader>l-",
   refile = "<leader>lw",
   archive = "<leader>lA",
+  inbox = "<leader>li",
   inbox_refresh = "<leader>lR",
 }
 

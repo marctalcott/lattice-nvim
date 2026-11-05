@@ -194,7 +194,7 @@ No journal file is kept. The filed note itself records that processing happened:
 
 ### A1.14 Delivery
 
-There is one pull request per phase of §16, and the plugin keeps working after each one. Phase 1 (A1.13) can land independently. Phases 2–4 add tests in `tests/inbox_spec.lua` covering the following:
+There is one pull request per phase of §16, and the plugin keeps working after each one. Dismissal (§8.4.4, `D`) needs the same remote deletion as filing, so it lands in Phase 4 with that deletion rather than in Phase 3. Phase 1 (A1.13) can land independently. Phases 2–4 add tests in `tests/inbox_spec.lua` covering the following:
 
 - configuration validation;
 - title and filename rules;
