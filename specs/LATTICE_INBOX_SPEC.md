@@ -176,7 +176,7 @@ The user edits the title with `vim.ui.input`, prefilled with the suggestion.
 
 No journal file is kept. The filed note itself records that processing happened:
 
-- **Startup recovery.** On each fetch, Lattice looks up every listed capture's ID in the scan index (the `:CAPTURE_ID:` property). A capture whose ID and repository (`:CAPTURE_REPO:`) already appear in a heading's property drawer in a saved note under its root is marked *filed, removal pending*, and its deletion is retried instead of offering it for filing again. This covers a crash between save and deletion, a failed deletion, and reprocessing (§12.3).
+- **Startup recovery.** On each fetch, Lattice looks up every listed capture's ID in the scan index (the `:CAPTURE_ID:` property). A capture whose ID and repository (`:CAPTURE_REPO:`) already appear in a heading's property drawer in a saved note under its root is marked *filed, removal pending*, and its deletion is retried instead of offering it for filing again. This covers a crash between save and deletion, a failed deletion, and reprocessing (§12.3). Each capture is looked up once per session, so the notes are scanned only when a fetch lists a capture not seen before; a capture filed during the session is recorded by its save.
 - **Unrecoverable cases.** The lookup uses the normal scan, so a note in an excluded folder (such as `Archives/**`) is not found. Moving a freshly filed note into an excluded folder before its capture is removed would offer the capture again. This is accepted as unlikely.
 - **Unavailable destination.** If the destination filesystem is unavailable, the write fails in Neovim, no `BufWritePost` happens, and nothing is deleted.
 

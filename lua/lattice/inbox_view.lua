@@ -41,11 +41,7 @@ local key = sync.key
 
 -- A path relative to the notes root, for messages.
 local function relative(path)
-  local root = config.options.root
-  if path and root and vim.startswith(path, root .. "/") then
-    return path:sub(#root + 2)
-  end
-  return path and vim.fn.fnamemodify(path, ":~") or "?"
+  return path and (config.relative(path)) or "?"
 end
 
 --- Asks before dismissing (§12.4). Overridable for tests.
@@ -99,7 +95,7 @@ function M.groups()
       local captures = vim.deepcopy(entry.captures or {})
       for _, capture in ipairs(captures) do
         capture.info = capture.error and { body = {}, title = capture.file } or M.info(capture)
-        capture.removal = (sync.state.removals or {})[key(capture)]
+        capture.removal = sync.removal(capture)
       end
       table.sort(captures, function(a, b)
         local ta, tb = a.info.time or 0, b.info.time or 0
@@ -346,7 +342,7 @@ end
 -- it from GitHub (A1.6).
 local function on_saved(buf, capture)
   local k = key(capture)
-  if (sync.state.removals or {})[k] then
+  if sync.removal(capture) then
     return
   end
   local path = vim.api.nvim_buf_get_name(buf)
@@ -421,7 +417,7 @@ function M.process(kind)
     return
   end
   local k = key(capture)
-  local removal = (sync.state.removals or {})[k]
+  local removal = sync.removal(capture)
   if removal then
     if removal.kind == "dismissed" then
       vim.notify("Lattice Inbox: this capture is being dismissed")
@@ -475,7 +471,7 @@ function M.dismiss()
     return
   end
   local k = key(capture)
-  local removal = (sync.state.removals or {})[k]
+  local removal = sync.removal(capture)
   if removal then
     if removal.kind == "filed" then
       vim.notify(("Lattice Inbox: already filed as %s; R retries its removal"):format(relative(removal.note)))

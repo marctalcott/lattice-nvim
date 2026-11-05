@@ -77,13 +77,13 @@ function IH.setup_inbox(root, repos, inbox)
   config.options.root = root
   config.options.inbox_sync = { config = dir .. "/inbox.json" }
   sync.cache_root = notes() .. "/cache"
-  sync.state = { running = false, repos = {}, order = {}, removals = {} }
+  sync.state = sync.new_state()
 end
 
 -- Waits until no removal is in progress.
 function IH.wait_removals()
   assert(vim.wait(20000, function()
-    for _, record in pairs(sync.state.removals or {}) do
+    for _, record in pairs(sync.state.removals) do
       if record.status == "removing" then
         return false
       end

@@ -376,4 +376,16 @@ function M.load(root)
   return cfg, notice
 end
 
+--- A path relative to the notes root, and the root (both real paths); for a
+--- path outside the root, its file name and its folder.
+function M.relative(path)
+  local root = M.options.root
+  local real_root = root and (vim.uv.fs_realpath(root) or root)
+  local real = vim.uv.fs_realpath(path) or path
+  if real_root and real:sub(1, #real_root + 1) == real_root .. "/" then
+    return real:sub(#real_root + 2), real_root
+  end
+  return vim.fn.fnamemodify(real, ":t"), vim.fn.fnamemodify(real, ":h")
+end
+
 return M

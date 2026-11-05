@@ -168,7 +168,7 @@ test("sync: a new session counts captures new since the cache was last updated",
   fetch("startup")
   local cache = sync.cache_root
   -- Simulate restarting Neovim: session state is gone, the cache remains.
-  sync.state = { running = false, repos = {}, order = {} }
+  sync.state = sync.new_state()
   sync.cache_root = cache
   r.push({ ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
   fetch("startup")
@@ -281,7 +281,7 @@ test("sync: no config means no fetch; auto_fetch=false skips only startup", func
   local root = notes()
   config.options.root = root
   config.options.inbox_sync = { config = root .. "/missing.json" }
-  sync.state = { running = false, repos = {}, order = {} }
+  sync.state = sync.new_state()
   vim.notify("sentinel")
   eq(fetch("startup"), false)
   eq(H.last_notify().message, "sentinel")
@@ -302,7 +302,7 @@ test("sync: an invalid config is reported and nothing is fetched", function()
   write(root, "inbox.json", '{"repositories": [{"name": "x"}]}')
   config.options.root = root
   config.options.inbox_sync = { config = root .. "/inbox.json" }
-  sync.state = { running = false, repos = {}, order = {} }
+  sync.state = sync.new_state()
   eq(fetch("startup"), false)
   eq(H.last_notify().level, vim.log.levels.ERROR)
   assert(H.last_notify().message:find("url is required", 1, true))
@@ -410,6 +410,11 @@ test("remove: a push rejected as non-fast-forward is retried after a fetch", fun
   eq(r.files(), { "2026-11-02-000000-bbbbbbbb.md" })
   eq(files("Personal"), { "2026-11-02-000000-bbbbbbbb.md" })
   eq(sync.state.removals, {})
+  -- The capture the retry fetched is still announced by the next fetch.
+  fetch("startup")
+  eq(H.last_notify().message, "Lattice Inbox: 1 new capture")
+  fetch("startup")
+  eq(H.last_notify().message, "Lattice Inbox: 0 new captures")
 end)
 
 test("remove: a capture already deleted remotely counts as removed", function()
@@ -603,4 +608,25 @@ test("remove: a lasting failure warns once per session; inactive repositories' r
   sync.fetch("manual")
   sync.retry_removals()
   eq(sync.state.removals, {})
+end)
+
+test("recovery: the notes are scanned only when a fetch lists a capture not looked up yet", function()
+  local root, r = notes(), remote()
+  r.push({ ["2026-11-01-000000-aaaaaaaa.md"] = capture("aaaaaaaa") })
+  setup_inbox(root, { { name = "Personal", url = r.url, notes_root = root } })
+  H.reset(root)
+  local scanner = H.scanner
+  local collect, scans = scanner.collect, 0
+  scanner.collect = function(...)
+    scans = scans + 1
+    return collect(...)
+  end
+  fetch("manual")
+  fetch("manual")
+  eq(scans, 1)
+  r.push({ ["2026-11-02-000000-bbbbbbbb.md"] = capture("bbbbbbbb") })
+  fetch("manual")
+  fetch("manual")
+  scanner.collect = collect
+  eq(scans, 2)
 end)

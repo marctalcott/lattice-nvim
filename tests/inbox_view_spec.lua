@@ -284,7 +284,7 @@ test("view: says why it is empty", function()
   local root = notes()
   config.options.root = root
   config.options.inbox_sync = { config = root .. "/none.json" }
-  sync.state = { running = false, repos = {}, order = {} }
+  sync.state = sync.new_state()
   H.reset(root)
   view.open()
   assert(H.dashboard_text():find("Inbox is off: no configuration at", 1, true), H.dashboard_text())

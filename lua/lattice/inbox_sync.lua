@@ -24,8 +24,21 @@ M.max_push_attempts = 3
 -- { repo, id, file, kind = "filed"|"dismissed", note = path of the filed
 --   note, status = "removing"|"pending", error }.
 -- `warned` holds retried removal failures already reported, by
--- "<repo>\0<reason>".
-M.state = { running = false, repos = {}, order = {}, config_error = nil, configured = false, removals = {} }
+-- "<repo>\0<reason>". `checked` holds the keys of captures recovery has
+-- already looked up this session.
+function M.new_state()
+  return {
+    running = false,
+    repos = {},
+    order = {},
+    config_error = nil,
+    configured = false,
+    removals = {},
+    warned = {},
+    checked = {},
+  }
+end
+M.state = M.new_state()
 
 local queued_rerun = false
 local startup_done = false
@@ -47,8 +60,12 @@ function M.key(capture)
 end
 
 local function removals()
-  M.state.removals = M.state.removals or {}
   return M.state.removals
+end
+
+--- The removal in progress or pending for a capture, or nil.
+function M.removal(capture)
+  return M.state.removals[M.key(capture)]
 end
 
 local function notify(message, level, opts)
@@ -369,12 +386,17 @@ local function sync_repo(repo, entry, done, release)
   local dir = M.cache_dir(repo)
   local had_cache = vim.uv.fs_stat(dir .. "/.git/HEAD") ~= nil
   local before = had_cache and file_set((M.list_captures(repo, dir))) or {}
+  -- Captures a removal's retry fetched have not been announced yet.
+  for file in pairs(entry.unannounced or {}) do
+    before[file] = nil
+  end
 
   local function finish(result)
     entry.captures, entry.skipped = M.list_captures(repo, dir)
     entry.new_files = {}
     if result.code == 0 then
       entry.status, entry.error, entry.last_success = "ok", nil, os.time()
+      entry.unannounced = {}
       for _, capture in ipairs(entry.captures) do
         if not before[capture.file] then
           entry.new_files[capture.file] = true
@@ -629,7 +651,6 @@ function M.remove(capture, kind, note, opts)
       )
     else
       record.status, record.error = "pending", message
-      M.state.warned = M.state.warned or {}
       local warned = M.state.warned
       local warned_key = capture.repo .. "\0" .. message
       if not opts.retry then
@@ -666,7 +687,16 @@ function M.remove(capture, kind, note, opts)
     remove_file(repo, dir, capture.file, function(result)
       local function finish()
         local current = M.state.repos[capture.repo] or entry
+        local had = file_set(current.captures or {})
         current.captures, current.skipped = M.list_captures(repo, dir)
+        -- A retry fetches; captures it brought in count as new at the next
+        -- fetch.
+        current.unannounced = current.unannounced or {}
+        for _, listed_capture in ipairs(current.captures) do
+          if not had[listed_capture.file] then
+            current.unannounced[listed_capture.file] = true
+          end
+        end
         release()
         if result.code == 0 then
           removals()[k] = nil
@@ -692,15 +722,17 @@ end
 --- Recovery (A1.12): a listed capture whose ID is already in a saved note
 --- under the notes root was filed earlier (a crash, a failed removal, or a
 --- second filing). It is marked filed, removal pending, so it is not offered
---- again. A note matches only if its drawer has the capture's ID and
+--- again. Each capture is looked up once per session, so the notes are
+--- scanned only when a fetch lists a capture not seen before. A note matches only if its drawer has the capture's ID and
 --- repository (:CAPTURE_REPO:). The note is found with the normal scan and
 --- confirmed on disk, so an unsaved buffer never counts.
 function M.recover(entries)
   local wanted = {}
   for _, entry in ipairs(entries) do
     for _, capture in ipairs(entry.captures or {}) do
-      if capture.id and not removals()[M.key(capture)] then
-        wanted[M.key(capture)] = capture
+      local k = M.key(capture)
+      if capture.id and not removals()[k] and not M.state.checked[k] then
+        wanted[k] = capture
       end
     end
   end
@@ -708,7 +740,15 @@ function M.recover(entries)
   if next(wanted) == nil or not root then
     return
   end
+  -- One scan per fetch with captures not looked up yet this session; a
+  -- capture filed later in the session is recorded by the save itself.
   local result = require("lattice.scanner").collect(root)
+  if result.error then
+    return
+  end
+  for k in pairs(wanted) do
+    M.state.checked[k] = true
+  end
   for _, heading in ipairs(result.outlines or {}) do
     local capture = heading.capture_id
       and heading.capture_repo
@@ -746,6 +786,7 @@ function M.retry_removals()
     if record.status == "pending" then
       if not (entry and entry.role == "active") then
         removals()[k] = nil
+        M.state.checked[k] = nil
       elseif entry.status == "ok" then
         if listed[k] then
           M.remove(listed[k], "filed", record.note, { retry = true })
