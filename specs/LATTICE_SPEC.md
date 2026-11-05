@@ -6,7 +6,7 @@
 - Target: macOS + Neovim/LazyVim. Written primarily in Lua.
 - Product owner: The repository owner.
 
-> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The capture inbox and `[promised:...]` decisions recorded in `product-vision.md` (2026-11-01) remain in effect. **Amendment A (below) replaces the `To Do` heading convention with org-mode style TODO keywords; Amendment B adds state cycling.**
+> This document is the Milestone 1 contract. Where it differs from `lattice-v0.1.md`, this document wins. The `[promised:...]` decision recorded in `product-vision.md` (2026-11-01) remains in effect; the capture inbox decision is extended by [`LATTICE_INBOX_SPEC.md`](LATTICE_INBOX_SPEC.md) (2026-11-05). **Amendment A (below) replaces the `To Do` heading convention with org-mode style TODO keywords; Amendment B adds state cycling.**
 
 ## Amendment A — Org-style TODO keywords (2026-11-02, requested by the product owner)
 
@@ -316,7 +316,7 @@ This integration requires Portico to expose an authenticated, permissioned proje
 
 ### Milestone 6 — Drafts note import (optional)
 
-When away from the Mac, the user captures notes in Drafts on iPhone. At first, manually paste/export them into PARA Markdown. A later import tool can ingest these files on the Mac, preferably without a hosted web service or always-on background process.
+When away from the Mac, the user captures notes in Drafts on iPhone. At first, manually paste/export them into PARA Markdown. A later import tool can ingest these files on the Mac, preferably without a hosted web service or always-on background process. *(Specified by [`LATTICE_INBOX_SPEC.md`](LATTICE_INBOX_SPEC.md): GitHub repositories as the capture queue, fetched by Lattice, opt-in.)*
 
 ## 12. Product boundaries and operational security
 

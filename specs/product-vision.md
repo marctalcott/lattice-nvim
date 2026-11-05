@@ -102,6 +102,8 @@ Desired outcome: captured notes can be reviewed, assigned to an appropriate PARA
 
 Decision (2026-11-01): Lattice lists Markdown files from a local inbox folder, `Inbox/` in the notes root by default, on manual refresh. How files reach that folder is outside Lattice, so it depends on no sync service. Lattice lists and opens captures only; the user or an AI agent files them and adds tasks.
 
+Superseded (2026-11-05): Drafts uploads captures to private GitHub repositories, and Lattice fetches, files and removes them as [`LATTICE_INBOX_SPEC.md`](LATTICE_INBOX_SPEC.md) specifies. That sync is opt-in through its own configuration file. The local inbox folder listing above stays for captures that arrive by other means.
+
 ### 5.5 Reliability and long-term note hygiene
 
 Potential future enhancements include better handling of duplicates, renames/moves of source files, faster rescans of large collections, and task history. These are implementation concerns to evaluate when real usage reveals a need, not requirements to build a database now.
