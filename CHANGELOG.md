@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-05 — GitHub capture inbox
+
+Implements [`specs/LATTICE_INBOX_SPEC.md`](specs/LATTICE_INBOX_SPEC.md) with its Amendment 1 (#23–#27): text captured on the phone in Drafts goes to a private GitHub repository, and Lattice files it into your notes. It is off unless `~/.config/lattice/inbox.json` exists; without that file nothing changes and Lattice makes no network access. Setup is in the README section "GitHub capture inbox".
 
 ### Added
 
-- GitHub capture inbox, part 1 ([spec](specs/LATTICE_INBOX_SPEC.md) Phase 2): with `~/.config/lattice/inbox.json`, Lattice fetches captures from your inbox repositories at startup and shows how many are new. Adds `:LatticeInboxRefresh` (`<leader>lR`), `:LatticeInboxStatus`, a `lattice inbox` section in `:checkhealth lattice`, and the `inbox_sync.config` setup option. Without the file, nothing changes and Lattice makes no network access.
-- GitHub capture inbox, part 2 (Phase 3): `:LatticeInbox` (`<leader>li`) lists captures by repository with suggested titles, a read-only preview and a suggested folder. `f` / `t` open a new, unsaved note or task with the capture's text and a `:CAPTURE_ID:` drawer; saving it files the capture.
-- GitHub capture inbox, part 3 (Phase 4): saving a filed note removes its capture from GitHub (`git rm`, commit, push, retried after a fetch if Drafts pushed meanwhile). A refused removal leaves the capture *filed, removal pending* and the next fetch retries. `D` dismisses a capture after confirmation. A capture whose `:CAPTURE_ID:` is already in a saved note is never offered again, so a crash between save and removal can't create a duplicate.
+- A Drafts action, [`drafts/send-to-github.js`](drafts/send-to-github.js), uploads the current draft as a Markdown capture to a GitHub repository you choose each time, and archives the draft only after GitHub confirms the file exists. It works on its own; [`drafts/README.md`](drafts/README.md) explains the setup.
+- Fetching: Lattice fetches captures from your inbox repositories at startup and shows how many are new. Adds `:LatticeInboxRefresh` (`<leader>lR`), `:LatticeInboxStatus`, a `lattice inbox` section in `:checkhealth lattice`, and the `inbox_sync.config` setup option.
+- `:LatticeInbox` (`<leader>li`) lists captures by repository with suggested titles, a read-only preview and a suggested folder. `f` / `t` open a new, unsaved note or task with the capture's text and a `:CAPTURE_ID:` drawer; saving it files the capture.
+- Saving a filed note removes its capture from GitHub (`git rm`, commit, push, retried after a fetch if Drafts pushed meanwhile). A refused removal leaves the capture *filed, removal pending*, and the next fetch retries. `D` dismisses a capture after confirmation.
+- A capture whose `:CAPTURE_ID:` and `:CAPTURE_REPO:` are already in a saved note is never offered again, so a crash between save and removal can't create a duplicate.
 
 ## 0.2.6 — 2026-11-04
 
