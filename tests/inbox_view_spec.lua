@@ -555,6 +555,59 @@ test("dismiss: refused while the capture's note is open unsaved", function()
   vim.api.nvim_buf_delete(note, { force = true })
 end)
 
+test("file/dismiss: a capture another session removed from the shared cache is refused and the list reread", function()
+  local _, r = inbox_with({
+    ["2026-11-04-182000-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-04T18:20:00-05:00", "Etna notes"),
+    ["2026-11-05-074500-bbbbbbbb.md"] = cap("bbbbbbbb", "2026-11-05T07:45:00-05:00", "Hekla notes"),
+    ["2026-11-05-080000-cccccccc.md"] = cap("cccccccc", "2026-11-05T08:00:00-05:00", "Fuji notes"),
+  })
+  local function path_of(id)
+    for _, capture in ipairs(sync.state.repos.Personal.captures) do
+      if capture.id == id then
+        return capture.path
+      end
+    end
+  end
+  local before = #vim.api.nvim_list_bufs()
+  -- Another session filed Etna: its file left the shared cache.
+  os.remove(path_of("aaaaaaaa"))
+  cursor_to("Etna")
+  local offered, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  eq(offered, {})
+  eq(#vim.api.nvim_list_bufs(), before)
+  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md was removed (in another Neovim session); the list is updated")
+  assert(not H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  assert(H.dashboard_text():find("▾ Personal (2)", 1, true), H.dashboard_text())
+  -- Dismissing asks nothing.
+  os.remove(path_of("bbbbbbbb"))
+  cursor_to("Hekla")
+  local asked, restore_confirm = confirming(true)
+  view.dismiss()
+  restore_confirm()
+  eq(asked, {})
+  assert(H.dashboard_text():find("▾ Personal (1)", 1, true), H.dashboard_text())
+  -- Removed while the prompts were open: no note is opened.
+  cursor_to("Fuji")
+  local input = vim.ui.input
+  local fuji = path_of("cccccccc")
+  local _, restore_answer = answer(true, "Resources")
+  local answering = vim.ui.input
+  vim.ui.input = function(opts, cb)
+    os.remove(fuji)
+    answering(opts, cb)
+  end
+  view.process("file")
+  restore_answer()
+  vim.ui.input = input
+  eq(#vim.api.nvim_list_bufs(), before)
+  assert(H.dashboard_text():find("▾ Personal (0)", 1, true), H.dashboard_text())
+  -- Nothing was removed from GitHub.
+  eq(#r.files(), 3)
+  view.close()
+end)
+
 test("recovery: a capture already filed in a note shows as filed and cannot be filed again", function()
   local root = para_root()
   write(root, "Resources/Etna notes.md", "# Etna notes\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n")

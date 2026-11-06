@@ -59,6 +59,19 @@ local function removal_notice(capture)
   return true
 end
 
+-- Every session shares the cache: when another one has removed the
+-- capture, it can't be filed or dismissed (its text is gone). The list is
+-- reread from the cache. Returns true when the capture is gone.
+local function gone_notice(capture)
+  if sync.present(capture) then
+    return false
+  end
+  vim.notify(("Lattice Inbox: %s was removed (in another Neovim session); the list is updated"):format(capture.file), vim.log.levels.WARN)
+  sync.relist(capture.repo)
+  M.paint()
+  return true
+end
+
 --- Asks before dismissing (§12.4). Overridable for tests.
 function M.confirm(message)
   return vim.fn.confirm(message, "&Dismiss\n&Cancel", 2, "Question") == 1
@@ -396,6 +409,10 @@ end
 
 -- Opens a new, unsaved note for the capture (A1.2 step 1).
 local function prepare(capture, title, folder, keyword)
+  -- The prompts took a while: check again.
+  if removal_notice(capture) or gone_notice(capture) then
+    return
+  end
   local root = config.options.root
   local dir = root .. "/" .. folder
   local real_root, real_dir = vim.uv.fs_realpath(root), vim.uv.fs_realpath(dir)
@@ -447,7 +464,7 @@ function M.process(kind)
     return
   end
   local k = key(capture)
-  if removal_notice(capture) then
+  if removal_notice(capture) or gone_notice(capture) then
     return
   end
   local pending = state.pending[k]
@@ -495,7 +512,7 @@ function M.dismiss()
     return
   end
   local k = key(capture)
-  if removal_notice(capture) then
+  if removal_notice(capture) or gone_notice(capture) then
     return
   end
   local pending = state.pending[k]

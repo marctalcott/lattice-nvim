@@ -983,6 +983,31 @@ function M.retry_removals()
   end
 end
 
+--- Rereads a repository's captures from its cache without fetching. Every
+--- Neovim session shares the cache, so another session may have removed
+--- captures from it (or fetched new ones, which count as new at the next
+--- fetch).
+function M.relist(name)
+  local entry = M.state.repos[name]
+  if not (entry and entry.role == "active" and entry.repo) or entry.discarded then
+    return
+  end
+  local had = file_set(entry.captures or {})
+  entry.captures, entry.skipped = M.list_captures(entry.repo, M.cache_dir(entry.repo))
+  entry.unannounced = entry.unannounced or {}
+  for _, capture in ipairs(entry.captures) do
+    if not had[capture.file] then
+      entry.unannounced[capture.file] = true
+    end
+  end
+  changed()
+end
+
+--- Whether a listed capture's file is still in the cache.
+function M.present(capture)
+  return capture.path ~= nil and vim.uv.fs_stat(capture.path) ~= nil
+end
+
 --- Removals for a repository, sorted by file.
 function M.removals_for(name)
   local out = {}
