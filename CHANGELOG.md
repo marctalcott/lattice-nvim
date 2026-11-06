@@ -5,6 +5,7 @@
 ### Added
 
 - GitHub capture inbox, part 1 ([spec](specs/LATTICE_INBOX_SPEC.md) Phase 2): with `~/.config/lattice/inbox.json`, Lattice fetches captures from your inbox repositories at startup and shows how many are new. Adds `:LatticeInboxRefresh` (`<leader>lR`), `:LatticeInboxStatus`, a `lattice inbox` section in `:checkhealth lattice`, and the `inbox_sync.config` setup option. Without the file, nothing changes and Lattice makes no network access.
+- GitHub capture inbox, part 2 (Phase 3): `:LatticeInbox` (`<leader>li`) lists captures by repository with suggested titles, a read-only preview and a suggested folder. `f` / `t` open a new, unsaved note or task with the capture's text and a `:CAPTURE_ID:` drawer; saving it files the capture.
 
 ## 0.2.6 — 2026-11-04
 

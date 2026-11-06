@@ -4,6 +4,7 @@ local dashboard = require("lattice.dashboard")
 local health = require("lattice.health")
 local insert = require("lattice.insert")
 local inbox_sync = require("lattice.inbox_sync")
+local inbox_view = require("lattice.inbox_view")
 
 local M = {}
 
@@ -22,6 +23,7 @@ M.priority_down = insert.priority_down
 M.migrate = insert.migrate
 M.refile = insert.refile
 M.archive = insert.archive
+M.inbox = inbox_view.open
 M.inbox_refresh = inbox_sync.refresh
 M.inbox_status = inbox_sync.status
 
@@ -81,6 +83,7 @@ local function set_keymaps(keymaps)
     { "priority_down", M.priority_down, "Lattice: lower priority" },
     { "refile", M.refile, "Lattice: refile subtree" },
     { "archive", M.archive, "Lattice: archive subtree" },
+    { "inbox", M.inbox, "Lattice: open inbox" },
     { "inbox_refresh", M.inbox_refresh, "Lattice: refresh inbox" },
   }
   local skipped = {}
@@ -131,6 +134,7 @@ function M.setup(opts)
   command("LatticeMigrate", M.migrate, "Convert this note's Lattice v0.1 items to Org headings")
   command("LatticeRefile", M.refile, "Move the subtree under the cursor under another heading")
   command("LatticeArchive", M.archive, "Move the subtree under the cursor to the archive note")
+  command("LatticeInbox", M.inbox, "Open the capture inbox")
   command("LatticeInboxRefresh", M.inbox_refresh, "Fetch captures from the GitHub inbox repositories")
   command("LatticeInboxStatus", M.inbox_status, "Show each inbox repository's sync status")
   set_keymaps(options.keymaps)

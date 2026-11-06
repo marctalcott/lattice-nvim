@@ -225,6 +225,9 @@ default. Both change buffers only; both notes are checked first.
                                                            *:LatticePrevState*
 :LatticePrevState   Previous state of the item.           (<leader>lp)
                                                               *:LatticeHealth*
+                                                               *:LatticeInbox*
+:LatticeInbox       Open the capture inbox: f file, t task,
+                    o open, R fetch, q close.             (<leader>li)
                                                         *:LatticeInboxRefresh*
 :LatticeInboxRefresh  Fetch captures from the GitHub inbox
                     repositories in inbox.json.           (<leader>lR)

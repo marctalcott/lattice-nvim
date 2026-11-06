@@ -22,6 +22,16 @@ M.state = { running = false, repos = {}, order = {}, config_error = nil, configu
 local queued_rerun = false
 local startup_done = false
 
+-- Functions called when a fetch starts or finishes (the inbox view
+-- repaints).
+M.listeners = {}
+
+local function changed()
+  for _, fn in ipairs(M.listeners) do
+    fn()
+  end
+end
+
 local function notify(message, level, opts)
   vim.notify(message, level or vim.log.levels.INFO, opts)
 end
@@ -379,6 +389,7 @@ function M.fetch(mode, on_done)
   end
 
   M.state.running = true
+  changed()
   local next_index, running, finished = 1, 0, 0
   local function launch()
     while running < M.max_parallel and next_index <= #active do
@@ -391,6 +402,7 @@ function M.fetch(mode, on_done)
         if finished == #active then
           M.state.running = false
           summary(mode, active)
+          changed()
           if on_done then
             on_done()
           end
