@@ -59,16 +59,32 @@ local function removal_notice(capture)
   return true
 end
 
--- Every session shares the cache: when another one has removed the
--- capture, it can't be filed or dismissed (its text is gone). The list is
--- reread from the cache. Returns true when the capture is gone.
+-- The capture's file can leave the local copy of its repository while it
+-- is listed: another Neovim session (they share the copy) removed it, or a
+-- fetch found it removed on GitHub. Its text is gone, so it can't be
+-- previewed, opened, filed or dismissed; the list is reread from the copy.
+-- While a fetch or removal is using the copy, or the copy is missing, the
+-- list is left for the fetch to update. Returns true when it is gone.
 local function gone_notice(capture)
   if sync.present(capture) then
     return false
   end
-  vim.notify(("Lattice Inbox: %s was removed (in another Neovim session); the list is updated"):format(capture.file), vim.log.levels.WARN)
-  sync.relist(capture.repo)
-  M.paint()
+  local status = sync.cache_status(capture.repo)
+  if status == "busy" then
+    vim.notify(("Lattice Inbox: %s is being updated; try again once it finishes"):format(capture.repo), vim.log.levels.WARN)
+  elseif status == "missing" then
+    vim.notify(
+      ("Lattice Inbox: the local copy of %s is missing; R fetches it again"):format(capture.repo),
+      vim.log.levels.WARN
+    )
+  else
+    vim.notify(
+      ("Lattice Inbox: %s is no longer in the local copy of %s; it was removed elsewhere"):format(capture.file, capture.repo),
+      vim.log.levels.WARN
+    )
+    sync.relist(capture.repo)
+    M.paint()
+  end
   return true
 end
 
@@ -301,6 +317,10 @@ function M.preview(capture)
   if not capture then
     return
   end
+  if gone_notice(capture) then
+    close_preview()
+    return
+  end
   local lines
   if capture.error then
     lines = { capture.file, "", "Cannot be filed: " .. capture.error, "", "o  Open    D  Dismiss" }
@@ -357,6 +377,9 @@ end
 function M.open_capture()
   local capture = current_capture()
   if not capture then
+    return
+  end
+  if gone_notice(capture) then
     return
   end
   close_preview()

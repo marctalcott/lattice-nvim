@@ -1008,6 +1008,24 @@ function M.present(capture)
   return capture.path ~= nil and vim.uv.fs_stat(capture.path) ~= nil
 end
 
+--- The state of a repository's cache in this session: "busy" while a fetch
+--- or removal is using it, "missing" when it was discarded or is gone (the
+--- next fetch clones it afresh), otherwise "ok".
+function M.cache_status(name)
+  local entry = M.state.repos[name]
+  if not (entry and entry.repo) then
+    return "missing"
+  end
+  local dir = M.cache_dir(entry.repo)
+  if locks[dir] then
+    return "busy"
+  end
+  if entry.discarded or not vim.uv.fs_stat(dir .. "/.git/HEAD") then
+    return "missing"
+  end
+  return "ok"
+end
+
 --- Removals for a repository, sorted by file.
 function M.removals_for(name)
   local out = {}

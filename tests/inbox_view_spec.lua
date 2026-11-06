@@ -577,7 +577,7 @@ test("file/dismiss: a capture another session removed from the shared cache is r
   restore()
   eq(offered, {})
   eq(#vim.api.nvim_list_bufs(), before)
-  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md was removed (in another Neovim session); the list is updated")
+  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md is no longer in the local copy of Personal; it was removed elsewhere")
   assert(not H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
   assert(H.dashboard_text():find("▾ Personal (2)", 1, true), H.dashboard_text())
   -- Dismissing asks nothing.
@@ -605,6 +605,49 @@ test("file/dismiss: a capture another session removed from the shared cache is r
   assert(H.dashboard_text():find("▾ Personal (0)", 1, true), H.dashboard_text())
   -- Nothing was removed from GitHub.
   eq(#r.files(), 3)
+  view.close()
+end)
+
+test("preview/open: a capture gone from the local copy is not shown empty; a busy or missing copy is not reread", function()
+  local _, r = inbox_with({
+    ["2026-11-04-182000-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-04T18:20:00-05:00", "Etna notes"),
+    ["2026-11-05-074500-bbbbbbbb.md"] = cap("bbbbbbbb", "2026-11-05T07:45:00-05:00", "Hekla notes"),
+  })
+  local entry = sync.state.repos.Personal
+  local function path_of(id)
+    for _, capture in ipairs(entry.captures) do
+      if capture.id == id then
+        return capture.path
+      end
+    end
+  end
+  local before = #vim.api.nvim_list_bufs()
+  -- While a fetch or removal holds the copy, the list is left to it.
+  os.remove(path_of("aaaaaaaa"))
+  local release
+  sync._internal.with_lock(sync.cache_dir(entry.repo), function(done)
+    release = done
+  end)
+  cursor_to("Etna")
+  view.activate()
+  eq(H.last_notify().message, "Lattice Inbox: Personal is being updated; try again once it finishes")
+  eq(vim.fn.bufnr("lattice://inbox/preview"), -1)
+  assert(H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  release()
+  -- Then it is reread.
+  cursor_to("Etna")
+  view.open_capture()
+  eq(#vim.api.nvim_list_bufs(), before)
+  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md is no longer in the local copy of Personal; it was removed elsewhere")
+  assert(not H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  -- A missing copy (discarded after a failed undo) asks for a fetch.
+  vim.fn.delete(sync.cache_dir(entry.repo), "rf")
+  entry.discarded = true
+  cursor_to("Hekla")
+  view.activate()
+  eq(H.last_notify().message, "Lattice Inbox: the local copy of Personal is missing; R fetches it again")
+  assert(H.dashboard_text():find("Hekla", 1, true), H.dashboard_text())
+  eq(#r.files(), 2)
   view.close()
 end)
 
