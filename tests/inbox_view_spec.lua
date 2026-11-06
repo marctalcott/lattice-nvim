@@ -145,8 +145,19 @@ test("note lines: heading, capture properties, blank line, text unchanged", func
     "tab\there",
   })
   eq(process.note_lines(CAPTURE, {}, "Call the Etna team", "TODO")[1], "# TODO Call the Etna team")
-  eq(process.capture_id_in(table.concat(process.note_lines(CAPTURE, body, "x"), "\n") .. "\n"), "3f1c9a52")
-  eq(process.capture_id_in("# x\nno drawer\n"), nil)
+  eq(process.has_capture_id(table.concat(process.note_lines(CAPTURE, body, "x"), "\n") .. "\n", "3f1c9a52"), true)
+  eq(process.has_capture_id("# x\nno drawer\n", "3f1c9a52"), false)
+  local note = table.concat(process.note_lines(CAPTURE, body, "x"), "\n") .. "\n"
+  eq(process.has_capture_id(note, "3f1c9a52", CAPTURE.repo), true)
+  eq(process.has_capture_id(note, "3f1c9a52", "Work"), false)
+  local drawer = ":PROPERTIES:\n:CAPTURE_ID: 3f1c9a52\n:END:\n"
+  eq(process.has_capture_id("# a\r\n:PROPERTIES:\r\n:capture_id:  3f1c9a52 \r\n:END:\r\n", "3f1c9a52"), true)
+  eq(process.has_capture_id("# x\n:PROPERTIES:\n:CAPTURE_ID: 3f1c9a52-more\n:END:\n", "3f1c9a52"), false)
+  -- Only a heading's property drawer counts: not body text, a quote or code.
+  eq(process.has_capture_id("# x\n\nSome text.\n" .. drawer, "3f1c9a52"), false)
+  eq(process.has_capture_id(":CAPTURE_ID: 3f1c9a52\n", "3f1c9a52"), false)
+  eq(process.has_capture_id("# x\n\n```\n# y\n" .. drawer .. "```\n", "3f1c9a52"), false)
+  eq(process.has_capture_id("# x\n\n> :CAPTURE_ID: 3f1c9a52\n", "3f1c9a52"), false)
 end)
 
 test("a filed task note is read by Lattice as a TODO heading with its properties", function()
@@ -166,10 +177,13 @@ local function inbox_with(captures, opts)
   local root = opts.root or para_root()
   local r = IH.remote()
   r.push(captures)
+  if opts.protect then
+    r.protect(true)
+  end
   IH.setup_inbox(root, opts.repos or { { name = "Personal", url = r.url, notes_root = root } }, opts.inbox)
   IH.fetch("manual")
   H.reset(root)
-  view.state.filed, view.state.pending, view.state.collapsed = {}, {}, {}
+  view.state.pending, view.state.collapsed = {}, {}
   view.open()
   return root, r
 end
@@ -270,7 +284,7 @@ test("view: says why it is empty", function()
   local root = notes()
   config.options.root = root
   config.options.inbox_sync = { config = root .. "/none.json" }
-  sync.state = { running = false, repos = {}, order = {} }
+  sync.state = sync.new_state()
   H.reset(root)
   view.open()
   assert(H.dashboard_text():find("Inbox is off: no configuration at", 1, true), H.dashboard_text())
@@ -292,7 +306,7 @@ test("preview: read-only, with suggested title, date, repository, folder and the
     "I think the Kilauea gas readings need a second look.",
     "Call Leilani.",
     "",
-    "f  File    t  Task    o  Open",
+    "f  File    t  Task    o  Open    D  Dismiss",
   })
   eq({ vim.bo[buf].modifiable, vim.bo[buf].readonly }, { false, true })
   -- Focus stays in the inbox.
@@ -350,12 +364,20 @@ test("file: asks for title then folder, opens an unsaved note; saving files the 
   view.open()
   local text = H.dashboard_text()
   assert(text:find("▾ Personal (0)", 1, true), text)
-  assert(text:find("Etna lava dome notes  · filed, removal pending", 1, true), text)
-  -- The capture is still in the remote repository (removal is separate).
-  eq(vim.uv.fs_stat(r.work .. "/2026-11-05-074500-aaaaaaaa.md") ~= nil, true)
-  cursor_to("Etna")
-  view.process("file")
-  assert(H.last_notify().message:find("already filed as", 1, true))
+  assert(text:find("Etna lava dome notes  · filed, removing…", 1, true), text)
+  -- Removal from GitHub follows the save.
+  IH.wait_removals()
+  eq(r.files(), {})
+  eq(r.last_message(), "Lattice: remove processed capture 2026-11-05-074500-aaaaaaaa.md")
+  text = H.dashboard_text()
+  assert(text:find("▾ Personal (0)\n  No captures", 1, true), text)
+  eq(H.last_notify().message, "Lattice Inbox: filed as Projects/Etna/Etna dome.md")
+  -- Saving the note again is an ordinary save.
+  vim.notify("sentinel")
+  vim.api.nvim_buf_call(buf, function()
+    vim.cmd("silent write")
+  end)
+  eq(H.last_notify().message, "sentinel")
   view.close()
 end)
 
@@ -450,4 +472,269 @@ test("file: a folder outside the notes root is refused", function()
     eq(H.last_notify().level, vim.log.levels.ERROR)
   end
   eq(vim.uv.fs_stat(vim.fs.dirname(root) .. "/outside"), nil)
+end)
+
+-- Dismissal (§12.4) and recovery in the view (A1.12) ---------------------------------
+
+local function confirming(answer_yes)
+  local asked = {}
+  local confirm = view.confirm
+  view.confirm = function(message)
+    asked[#asked + 1] = message
+    return answer_yes
+  end
+  return asked, function()
+    view.confirm = confirm
+  end
+end
+
+test("dismiss: asks first; cancelling keeps the capture, confirming deletes it remotely", function()
+  local _, r = inbox_with({
+    ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes"),
+    ["noid.md"] = "just text\n",
+  })
+  cursor_to("Etna")
+  local asked, restore = confirming(false)
+  view.dismiss()
+  restore()
+  eq(asked, { 'Dismiss "Etna notes" from Personal? It is deleted from GitHub and not filed.' })
+  eq(#r.files(), 2)
+  asked, restore = confirming(true)
+  view.dismiss()
+  assert(H.dashboard_text():find("Etna notes  · dismissing…", 1, true), H.dashboard_text())
+  -- Pressing D again while it runs says so.
+  view.dismiss()
+  eq(H.last_notify().message, "Lattice Inbox: this capture is being dismissed")
+  eq(#asked, 1)
+  IH.wait_removals()
+  eq(r.files(), { "noid.md" })
+  eq(H.last_notify().message, "Lattice Inbox: dismissed 2026-11-05-074500-aaaaaaaa.md")
+  -- A malformed capture can be dismissed too.
+  cursor_to("noid.md")
+  view.dismiss()
+  IH.wait_removals()
+  restore()
+  eq(asked[2], 'Dismiss "noid.md" from Personal? It is deleted from GitHub and not filed.')
+  eq(r.files(), {})
+  assert(H.dashboard_text():find("▾ Personal (0)\n  No captures", 1, true), H.dashboard_text())
+  view.close()
+end)
+
+test("dismiss: a failed deletion leaves the capture available", function()
+  local _, r = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  r.protect(true)
+  cursor_to("Etna")
+  local _, restore = confirming(true)
+  view.dismiss()
+  IH.wait_removals()
+  restore()
+  eq(sync.state.removals, {})
+  eq(H.last_notify().level, vim.log.levels.WARN)
+  assert(H.last_notify().message:find("could not dismiss 2026-11-05-074500-aaaaaaaa.md from Personal", 1, true))
+  assert(H.dashboard_text():find("▾ Personal (1)\n  2026-11-05 07:45  Etna notes\n", 1, true), H.dashboard_text())
+  eq(#r.files(), 1)
+  view.close()
+end)
+
+test("dismiss: refused while the capture's note is open unsaved", function()
+  local _, r = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  cursor_to("Etna")
+  local _, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  local note = vim.api.nvim_get_current_buf()
+  view.open()
+  cursor_to("Etna")
+  local asked, restore_confirm = confirming(true)
+  view.dismiss()
+  restore_confirm()
+  eq(asked, {})
+  assert(H.last_notify().message:find("open and unsaved", 1, true))
+  eq(#r.files(), 1)
+  view.close()
+  vim.api.nvim_buf_delete(note, { force = true })
+end)
+
+test("file/dismiss: a capture another session removed from the shared cache is refused and the list reread", function()
+  local _, r = inbox_with({
+    ["2026-11-04-182000-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-04T18:20:00-05:00", "Etna notes"),
+    ["2026-11-05-074500-bbbbbbbb.md"] = cap("bbbbbbbb", "2026-11-05T07:45:00-05:00", "Hekla notes"),
+    ["2026-11-05-080000-cccccccc.md"] = cap("cccccccc", "2026-11-05T08:00:00-05:00", "Fuji notes"),
+  })
+  local function path_of(id)
+    for _, capture in ipairs(sync.state.repos.Personal.captures) do
+      if capture.id == id then
+        return capture.path
+      end
+    end
+  end
+  local before = #vim.api.nvim_list_bufs()
+  -- Another session filed Etna: its file left the shared cache.
+  os.remove(path_of("aaaaaaaa"))
+  cursor_to("Etna")
+  local offered, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  eq(offered, {})
+  eq(#vim.api.nvim_list_bufs(), before)
+  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md is no longer in the local copy of Personal; it was removed elsewhere")
+  assert(not H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  assert(H.dashboard_text():find("▾ Personal (2)", 1, true), H.dashboard_text())
+  -- Dismissing asks nothing.
+  os.remove(path_of("bbbbbbbb"))
+  cursor_to("Hekla")
+  local asked, restore_confirm = confirming(true)
+  view.dismiss()
+  restore_confirm()
+  eq(asked, {})
+  assert(H.dashboard_text():find("▾ Personal (1)", 1, true), H.dashboard_text())
+  -- Removed while the prompts were open: no note is opened.
+  cursor_to("Fuji")
+  local input = vim.ui.input
+  local fuji = path_of("cccccccc")
+  local _, restore_answer = answer(true, "Resources")
+  local answering = vim.ui.input
+  vim.ui.input = function(opts, cb)
+    os.remove(fuji)
+    answering(opts, cb)
+  end
+  view.process("file")
+  restore_answer()
+  vim.ui.input = input
+  eq(#vim.api.nvim_list_bufs(), before)
+  assert(H.dashboard_text():find("▾ Personal (0)", 1, true), H.dashboard_text())
+  -- Nothing was removed from GitHub.
+  eq(#r.files(), 3)
+  view.close()
+end)
+
+test("preview/open: a capture gone from the local copy is not shown empty; a busy or missing copy is not reread", function()
+  local _, r = inbox_with({
+    ["2026-11-04-182000-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-04T18:20:00-05:00", "Etna notes"),
+    ["2026-11-05-074500-bbbbbbbb.md"] = cap("bbbbbbbb", "2026-11-05T07:45:00-05:00", "Hekla notes"),
+  })
+  local entry = sync.state.repos.Personal
+  local function path_of(id)
+    for _, capture in ipairs(entry.captures) do
+      if capture.id == id then
+        return capture.path
+      end
+    end
+  end
+  local before = #vim.api.nvim_list_bufs()
+  -- While a fetch or removal holds the copy, the list is left to it.
+  os.remove(path_of("aaaaaaaa"))
+  local release
+  sync._internal.with_lock(sync.cache_dir(entry.repo), function(done)
+    release = done
+  end)
+  cursor_to("Etna")
+  view.activate()
+  eq(H.last_notify().message, "Lattice Inbox: Personal is being updated; try again once it finishes")
+  eq(vim.fn.bufnr("lattice://inbox/preview"), -1)
+  assert(H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  release()
+  -- Then it is reread.
+  cursor_to("Etna")
+  view.open_capture()
+  eq(#vim.api.nvim_list_bufs(), before)
+  eq(H.last_notify().message, "Lattice Inbox: 2026-11-04-182000-aaaaaaaa.md is no longer in the local copy of Personal; it was removed elsewhere")
+  assert(not H.dashboard_text():find("Etna", 1, true), H.dashboard_text())
+  -- A missing copy (discarded after a failed undo) asks for a fetch.
+  vim.fn.delete(sync.cache_dir(entry.repo), "rf")
+  entry.discarded = true
+  cursor_to("Hekla")
+  view.activate()
+  eq(H.last_notify().message, "Lattice Inbox: the local copy of Personal is missing; R fetches it again")
+  assert(H.dashboard_text():find("Hekla", 1, true), H.dashboard_text())
+  eq(#r.files(), 2)
+  view.close()
+end)
+
+test("recovery: a capture already filed in a note shows as filed and cannot be filed again", function()
+  local root = para_root()
+  write(root, "Resources/Etna notes.md", "# Etna notes\n:PROPERTIES:\n:CAPTURE_ID: aaaaaaaa\n:CAPTURE_REPO: Personal\n:END:\n")
+  -- The remote refuses pushes, so the removal started by the fetch fails.
+  local _, r = inbox_with(
+    { ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") },
+    { root = root, protect = true }
+  )
+  IH.wait_removals()
+  view.paint()
+  assert(H.dashboard_text():find("▾ Personal (0)\n  2026-11-05 07:45  Etna notes  · filed, removal pending", 1, true), H.dashboard_text())
+  cursor_to("Etna")
+  local offered, restore = answer(true, true)
+  view.process("file")
+  restore()
+  eq(offered.default, nil)
+  eq(H.last_notify().message, "Lattice Inbox: already filed as Resources/Etna notes.md; R retries its removal")
+  -- Allowed again: R removes it.
+  r.protect(false)
+  view.refresh()
+  assert(vim.wait(20000, function()
+    return not sync.state.running and next(sync.state.removals) == nil
+  end, 20))
+  eq(r.files(), {})
+  view.close()
+end)
+
+test("file: the saved note must name the capture's repository; a parse failure is reported", function()
+  local root, r = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  cursor_to("Etna")
+  local _, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  local buf = vim.api.nvim_get_current_buf()
+  -- Another repository's drawer: not this capture.
+  vim.api.nvim_buf_set_lines(buf, 5, 6, false, { ":CAPTURE_REPO: Work" })
+  vim.cmd("silent write")
+  assert(H.last_notify().message:find("saved without :CAPTURE_ID: aaaaaaaa and :CAPTURE_REPO: Personal", 1, true), H.last_notify().message)
+  eq(sync.state.removals, {})
+  -- The note can't be parsed back.
+  vim.api.nvim_buf_set_lines(buf, 5, 6, false, { ":CAPTURE_REPO: Personal" })
+  local tasks = require("lattice.tasks")
+  local parse = tasks.parse
+  tasks.parse = function()
+    return nil, "no Markdown parser"
+  end
+  vim.cmd("silent write")
+  tasks.parse = parse
+  eq(H.last_notify().message, "Lattice Inbox: Resources/Etna notes.md could not be read back (no Markdown parser), so the capture stays in the inbox")
+  eq(sync.state.removals, {})
+  -- Fixed: the next save files it.
+  vim.cmd("silent write")
+  eq(H.last_notify().message, "Lattice Inbox: filed as Resources/Etna notes.md")
+  IH.wait_removals()
+  eq(r.files(), {})
+end)
+
+test("file: saving after the capture was recovered from another note warns and does not file it again", function()
+  local root = inbox_with({ ["2026-11-05-074500-aaaaaaaa.md"] = cap("aaaaaaaa", "2026-11-05T07:45:00-05:00", "Etna notes") })
+  cursor_to("Etna")
+  local _, restore = answer(true, "Resources")
+  view.process("file")
+  restore()
+  local buf = vim.api.nvim_get_current_buf()
+  -- Meanwhile a fetch found an older note for this capture.
+  sync.state.removals["Personal\0aaaaaaaa"] = {
+    repo = "Personal",
+    id = "aaaaaaaa",
+    file = "2026-11-05-074500-aaaaaaaa.md",
+    kind = "filed",
+    note = root .. "/Projects/Etna/Older.md",
+    status = "pending",
+  }
+  vim.cmd("silent write")
+  eq(
+    H.last_notify().message,
+    "Lattice Inbox: the capture was already filed as Projects/Etna/Older.md; Resources/Etna notes.md is a separate copy and the capture was not filed again"
+  )
+  eq(view.state.pending["Personal\0aaaaaaaa"], nil)
+  -- Later saves are ordinary saves.
+  vim.notify("sentinel")
+  vim.api.nvim_buf_call(buf, function()
+    vim.cmd("silent write")
+  end)
+  eq(H.last_notify().message, "sentinel")
+  sync.state.removals = {}
 end)

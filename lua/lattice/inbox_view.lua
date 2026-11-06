@@ -1,6 +1,7 @@
--- The inbox view (LATTICE_INBOX_SPEC §8, A1.2, A1.10): captures grouped by
--- repository, a read-only preview, and filing into a new, unsaved note.
--- Lattice writes nothing itself: the user's save files the capture.
+-- The inbox view (LATTICE_INBOX_SPEC §8, §12, A1.2, A1.10): captures grouped
+-- by repository, a read-only preview, filing into a new, unsaved note, and
+-- dismissal. Lattice writes nothing itself: the user's save files the
+-- capture, and only then is it removed from GitHub.
 local config = require("lattice.config")
 local process = require("lattice.inbox_process")
 local sync = require("lattice.inbox_sync")
@@ -9,7 +10,7 @@ local M = {}
 
 local BUFFER_NAME = "lattice://inbox"
 local PREVIEW_NAME = "lattice://inbox/preview"
-local FOOTER = "Enter  Preview / fold    f  File    t  Task    o  Open    R  Refresh    q  Close"
+local FOOTER = "Enter  Preview / fold    f  File    t  Task    o  Open    D  Dismiss    R  Refresh    q  Close"
 local ns = vim.api.nvim_create_namespace("lattice.inbox")
 
 local WINDOW_OPTIONS = {
@@ -23,21 +24,73 @@ local WINDOW_OPTIONS = {
   cursorline = true,
 }
 
--- Session state. `filed` and `pending` are keyed by "<repo>\0<id>":
--- filed → the saved note's path; pending → the unsaved note's buffer.
+-- Session state. `pending` maps sync.key(capture) to the buffer of the
+-- capture's unsaved note. Filed and dismissed captures are tracked by
+-- sync.state.removals until GitHub removal succeeds.
 local state = {
   buf = nil,
   prev_buf = nil,
   preview_win = nil,
   targets = {},
   collapsed = {},
-  filed = {},
   pending = {},
 }
 M.state = state
 
-local function key(capture)
-  return capture.repo .. "\0" .. (capture.id or capture.file)
+local key = sync.key
+
+-- A path relative to the notes root, for messages.
+local function relative(path)
+  return path and (config.relative(path)) or "?"
+end
+
+-- Tells the user why a capture being removed can't be filed or dismissed.
+-- Returns true when it is being removed.
+local function removal_notice(capture)
+  local removal = sync.removal(capture)
+  if not removal then
+    return false
+  end
+  if removal.kind == "dismissed" then
+    vim.notify("Lattice Inbox: this capture is being dismissed")
+  else
+    vim.notify(("Lattice Inbox: already filed as %s; R retries its removal"):format(relative(removal.note)))
+  end
+  return true
+end
+
+-- The capture's file can leave the local copy of its repository while it
+-- is listed: another Neovim session (they share the copy) removed it, or a
+-- fetch found it removed on GitHub. Its text is gone, so it can't be
+-- previewed, opened, filed or dismissed; the list is reread from the copy.
+-- While a fetch or removal is using the copy, or the copy is missing, the
+-- list is left for the fetch to update. Returns true when it is gone.
+local function gone_notice(capture)
+  if sync.present(capture) then
+    return false
+  end
+  local status = sync.cache_status(capture.repo)
+  if status == "busy" then
+    vim.notify(("Lattice Inbox: %s is being updated; try again once it finishes"):format(capture.repo), vim.log.levels.WARN)
+  elseif status == "missing" then
+    vim.notify(
+      ("Lattice Inbox: the local copy of %s is missing; R fetches it again"):format(capture.repo),
+      vim.log.levels.WARN
+    )
+  else
+    vim.notify(
+      ("Lattice Inbox: %s is no longer in the local copy of %s; it was removed elsewhere"):format(capture.file, capture.repo),
+      vim.log.levels.WARN
+    )
+    sync.relist(capture.repo)
+    M.paint()
+  end
+  return true
+end
+
+--- Asks before dismissing (§12.4). Overridable for tests.
+function M.confirm(message)
+  return vim.fn.confirm(message, "&Dismiss\n&Cancel", 2, "Question") == 1
 end
 
 -- Title, body and time of a capture, reread only when its file changes.
@@ -86,7 +139,7 @@ function M.groups()
       local captures = vim.deepcopy(entry.captures or {})
       for _, capture in ipairs(captures) do
         capture.info = capture.error and { body = {}, title = capture.file } or M.info(capture)
-        capture.filed = state.filed[key(capture)]
+        capture.removal = sync.removal(capture)
       end
       table.sort(captures, function(a, b)
         local ta, tb = a.info.time or 0, b.info.time or 0
@@ -129,7 +182,7 @@ function M.render(groups, opts)
   for _, group in ipairs(groups) do
     local open = 0
     for _, capture in ipairs(group.captures) do
-      if not capture.filed then
+      if not capture.removal then
         open = open + 1
       end
     end
@@ -143,16 +196,23 @@ function M.render(groups, opts)
         add("  No captures", "Comment", { group = group.name })
       end
       for _, capture in ipairs(group.captures) do
+        local removal = capture.removal
+        local suffix = ""
+        if removal then
+          if removal.kind == "dismissed" then
+            suffix = "  · dismissing…"
+          elseif removal.status == "removing" then
+            suffix = "  · filed, removing…"
+          else
+            suffix = "  · filed, removal pending"
+          end
+        end
         if capture.error then
-          add(("  ⚠ %s: %s"):format(capture.file, capture.error), "WarningMsg", { capture = capture })
+          add(("  ⚠ %s: %s%s"):format(capture.file, capture.error, suffix), removal and "Comment" or "WarningMsg", { capture = capture })
         else
           local date = display_date(capture)
-          local line = ("  %s  %s"):format(date, capture.info.title)
-          if capture.filed then
-            line = line .. "  · filed, removal pending"
-          end
-          add(line, capture.filed and "Comment" or nil, { capture = capture })
-          if not capture.filed then
+          add(("  %s  %s%s"):format(date, capture.info.title, suffix), removal and "Comment" or nil, { capture = capture })
+          if not removal then
             mark(2, #date, "Comment")
           end
         end
@@ -257,9 +317,13 @@ function M.preview(capture)
   if not capture then
     return
   end
+  if gone_notice(capture) then
+    close_preview()
+    return
+  end
   local lines
   if capture.error then
-    lines = { capture.file, "", "Cannot be filed: " .. capture.error, "", "o  Open" }
+    lines = { capture.file, "", "Cannot be filed: " .. capture.error, "", "o  Open    D  Dismiss" }
   else
     local _, suggestion, note = M.folder_choices(capture, config.options.root)
     lines = {
@@ -270,7 +334,7 @@ function M.preview(capture)
       "",
     }
     vim.list_extend(lines, capture.info.body)
-    vim.list_extend(lines, { "", "f  File    t  Task    o  Open" })
+    vim.list_extend(lines, { "", "f  File    t  Task    o  Open    D  Dismiss" })
   end
   local buf = vim.fn.bufnr(PREVIEW_NAME)
   if buf == -1 then
@@ -315,6 +379,9 @@ function M.open_capture()
   if not capture then
     return
   end
+  if gone_notice(capture) then
+    return
+  end
   close_preview()
   vim.cmd.edit(vim.fn.fnameescape(capture.path))
   vim.bo.readonly = true
@@ -322,38 +389,53 @@ function M.open_capture()
 end
 
 -- After the user saves a prepared note (A1.2 step 3): read the file back and
--- mark the capture filed only if it carries the capture's ID.
+-- mark the capture filed only if it carries the capture's ID; then remove
+-- it from GitHub (A1.6).
 local function on_saved(buf, capture)
   local k = key(capture)
-  if state.filed[k] then
-    return
-  end
   local path = vim.api.nvim_buf_get_name(buf)
-  local file = io.open(path, "r")
-  local text = file and file:read("*a") or ""
-  if file then
-    file:close()
+  local function stop_watching()
+    -- Later saves of the note are ordinary saves.
+    state.pending[k] = nil
+    pcall(vim.api.nvim_del_augroup_by_name, "lattice.inbox.note." .. buf)
   end
-  if process.capture_id_in(text) ~= capture.id then
+  local removal = sync.removal(capture)
+  if removal then
+    -- Meanwhile the capture was filed elsewhere (recovery found an older
+    -- note) or dismissed: this note is an extra copy, not a filing.
+    stop_watching()
+    local why = removal.kind == "dismissed" and "was dismissed"
+      or ("was already filed as %s"):format(relative(removal.note))
     vim.notify(
-      ("Lattice Inbox: %s was saved without :CAPTURE_ID: %s, so the capture stays in the inbox"):format(
-        vim.fn.fnamemodify(path, ":~:."),
-        capture.id
-      ),
+      ("Lattice Inbox: the capture %s; %s is a separate copy and the capture was not filed again"):format(why, relative(path)),
       vim.log.levels.WARN
     )
     return
   end
-  state.filed[k] = path
-  state.pending[k] = nil
-  local root = config.options.root
-  local rel = root and vim.startswith(path, root .. "/") and path:sub(#root + 2) or path
-  vim.notify(("Lattice Inbox: filed as %s"):format(rel))
-  M.paint()
+  local cfg = config.load(config.options.root) or config.defaults()
+  local found, err = process.file_has_capture_id(path, capture.id, capture.repo, cfg)
+  if not found then
+    local message = err
+        and ("Lattice Inbox: %s could not be read back (%s), so the capture stays in the inbox"):format(relative(path), err)
+      or ("Lattice Inbox: %s was saved without :CAPTURE_ID: %s and :CAPTURE_REPO: %s in a property drawer, so the capture stays in the inbox"):format(
+        relative(path),
+        capture.id,
+        capture.repo
+      )
+    vim.notify(message, vim.log.levels.WARN)
+    return
+  end
+  stop_watching()
+  vim.notify(("Lattice Inbox: filed as %s"):format(relative(path)))
+  sync.remove(capture, "filed", path)
 end
 
 -- Opens a new, unsaved note for the capture (A1.2 step 1).
 local function prepare(capture, title, folder, keyword)
+  -- The prompts took a while: check again.
+  if removal_notice(capture) or gone_notice(capture) then
+    return
+  end
   local root = config.options.root
   local dir = root .. "/" .. folder
   local real_root, real_dir = vim.uv.fs_realpath(root), vim.uv.fs_realpath(dir)
@@ -405,8 +487,7 @@ function M.process(kind)
     return
   end
   local k = key(capture)
-  if state.filed[k] then
-    vim.notify("Lattice Inbox: already filed as " .. vim.fn.fnamemodify(state.filed[k], ":~:."))
+  if removal_notice(capture) or gone_notice(capture) then
     return
   end
   local pending = state.pending[k]
@@ -444,6 +525,29 @@ function M.process(kind)
       prepare(capture, title, folder, keyword)
     end)
   end)
+end
+
+--- D: dismiss the capture under the cursor after confirmation: it is
+--- deleted from GitHub without being filed (§12.4).
+function M.dismiss()
+  local capture = current_capture()
+  if not capture then
+    return
+  end
+  local k = key(capture)
+  if removal_notice(capture) or gone_notice(capture) then
+    return
+  end
+  local pending = state.pending[k]
+  if pending and vim.api.nvim_buf_is_valid(pending) then
+    vim.notify("Lattice Inbox: this capture's note is open and unsaved; save it to file the capture, or close it first", vim.log.levels.WARN)
+    return
+  end
+  local name = capture.error and capture.file or capture.info.title
+  if not M.confirm(("Dismiss %q from %s? It is deleted from GitHub and not filed."):format(name, capture.repo)) then
+    return
+  end
+  sync.remove(capture, "dismissed")
 end
 
 function M.refresh()
@@ -486,6 +590,7 @@ local function create_buffer()
     M.process("task")
   end, "Lattice Inbox: file as a task")
   map("o", M.open_capture, "Lattice Inbox: open capture read-only")
+  map("D", M.dismiss, "Lattice Inbox: dismiss capture")
   map("R", M.refresh, "Lattice Inbox: fetch captures")
   map("q", M.close, "Lattice Inbox: close")
   vim.api.nvim_create_autocmd("BufWinEnter", {

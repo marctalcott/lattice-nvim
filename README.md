@@ -432,8 +432,6 @@ When the folder exists, the dashboard's INBOX group lists each `.md` file in it,
 
 ## GitHub capture inbox
 
-*In progress: Lattice fetches, lists and files captures; removing filed captures from GitHub comes next ([spec](specs/LATTICE_INBOX_SPEC.md)).*
-
 The [Send to GitHub](drafts/README.md) Drafts action uploads captures from your iPhone to private GitHub repositories. Lattice fetches them when Neovim starts, if `~/.config/lattice/inbox.json` exists. Without that file Lattice makes no network access.
 
 ```json
@@ -449,7 +447,7 @@ The [Send to GitHub](drafts/README.md) Drafts action uploads captures from your 
 ```
 
 - Only repositories whose `notes_root` is the notes root you passed to `setup` are fetched, so work captures stay with work notes. Set `"enabled": false` to skip one.
-- At startup a notification shows how many new captures arrived, including `0 new captures`. `:LatticeInboxRefresh` (`<leader>lR`) fetches again and stays quiet unless something fails. `:LatticeInboxStatus` shows each repository's state and last error.
+- At startup a notification shows how many new captures arrived, including `0 new captures`. `:LatticeInboxRefresh` (`<leader>lR`) fetches again and stays quiet unless something fails. `:LatticeInboxStatus` shows each repository's state, last error and any removals still pending.
 - Lattice uses your own Git authentication and never prompts. To keep two github.com accounts apart, give the work one an SSH host alias (`Host github-work` with its own `IdentityFile` in `~/.ssh/config`) and use it in `url`. Don't put tokens in `url`; Lattice rejects them.
 - Each repository is mirrored in a shallow clone under `stdpath("cache")/lattice/inbox`, which can be deleted at any time. Captures stay on GitHub until they're processed.
 - Use another config path with `setup({ inbox_sync = { config = "~/path/inbox.json" } })`.
@@ -461,7 +459,8 @@ The [Send to GitHub](drafts/README.md) Drafts action uploads captures from your 
 | `f`     | File as a note: confirm the title, pick a folder (the suggestion is first) |
 | `t`     | Same, as a task: the heading starts with your first workflow state  |
 | `o`     | Open the capture read-only                                          |
-| `R`     | Fetch again                                                         |
+| `D`     | Dismiss: after you confirm, delete the capture from GitHub unfiled  |
+| `R`     | Fetch again (also retries pending removals)                         |
 | `q`     | Close                                                               |
 
 Filing opens a new, unsaved note in the folder you picked:
@@ -479,6 +478,12 @@ Etna dome grew overnight. Check the tiltmeter data.
 ```
 
 Edit it if you like, then save. Saving is what files the capture: close the buffer without saving and nothing happens. Lattice never overwrites a note (a name in use gets ` 2`) and never creates folders. The folder suggestion is the existing folder, two levels deep at most, whose name (or `aliases` entry in `inbox.json`) appears most often in the capture; with no match it's `default_folder` (`Resources`).
+
+After the save, Lattice reads the note back from disk and, if its property drawer still has the capture's `:CAPTURE_ID:` and `:CAPTURE_REPO:`, removes the capture from GitHub: `git rm`, a commit (`Lattice: remove processed capture <file>`) under your Git identity, and a push. If Drafts uploaded something meanwhile, Lattice fetches and tries again, up to three times. If the push is refused (branch protection, permissions), the capture stays listed as *filed, removal pending* and the next fetch retries.
+
+Lattice keeps no record of its own: the note is the record. At every fetch, a capture whose ID and repository are already in a saved note's property drawer under the notes root is treated as filed and removed, never offered again. That covers Neovim quitting before the removal finished. Notes in excluded folders such as `Archives/` aren't searched, so file captures before archiving them. With two Neovim sessions open, a capture filed in one whose removal is still pending can be offered again in the other; filing it there makes a second note. A capture already removed elsewhere can't be previewed, filed or dismissed, and the list updates.
+
+The removal commit is made in the cache with `--no-verify` and without signing (your Git hooks and `commit.gpgsign` don't apply there). Set `user.name` and `user.email` in your global Git config, or the commit fails and `:LatticeInboxStatus` says so.
 
 ## Limitations
 

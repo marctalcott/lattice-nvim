@@ -554,18 +554,6 @@ end
 
 -- Refile and archive (§14.2) ------------------------------------------------
 
--- The note's path relative to the notes root and the root, or its file
--- name and its own folder when it is outside the root.
-local function relative(path)
-  local root = config.options.root
-  local real_root = root and (vim.uv.fs_realpath(root) or root)
-  local real = vim.uv.fs_realpath(path) or path
-  if real_root and real:sub(1, #real_root + 1) == real_root .. "/" then
-    return real:sub(#real_root + 2), real_root
-  end
-  return vim.fn.fnamemodify(real, ":t"), vim.fn.fnamemodify(real, ":h")
-end
-
 --- Org's C-c C-w: moves the subtree under the cursor under a heading
 --- chosen from every note (or to the end of a note), re-levelling it.
 function M.refile()
@@ -679,7 +667,7 @@ function M.archive()
     warn("save this note to a file first; its archive note goes beside it")
     return
   end
-  local rel, base = relative(path)
+  local rel, base = config.relative(path)
   local location = (cfg.archive or {}).location or "%s_archive.md"
   local stem = rel:gsub("%.md$", "")
   local target = base .. "/" .. location:gsub("%%s", function()
