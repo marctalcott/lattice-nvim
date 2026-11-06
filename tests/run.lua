@@ -11,7 +11,7 @@ package.path = table.concat({
 vim.opt.runtimepath:prepend(repo)
 
 local H = require("helpers")
-for _, name in ipairs({ "parser_spec", "scanner_spec", "dashboard_spec", "insert_spec", "tasks_spec", "metadata_spec", "schedule_spec", "mutate_spec", "integration_spec", "review_fixes_spec", "review_fixes_0_2_1_spec", "review_fixes_0_2_2_spec" }) do
+for _, name in ipairs({ "parser_spec", "scanner_spec", "dashboard_spec", "insert_spec", "tasks_spec", "metadata_spec", "schedule_spec", "mutate_spec", "integration_spec", "review_fixes_spec", "review_fixes_0_2_1_spec", "review_fixes_0_2_2_spec", "inbox_spec" }) do
   dofile(repo .. "/tests/" .. name .. ".lua")
 end
 

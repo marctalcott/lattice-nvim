@@ -3,6 +3,7 @@ local config = require("lattice.config")
 local dashboard = require("lattice.dashboard")
 local health = require("lattice.health")
 local insert = require("lattice.insert")
+local inbox_sync = require("lattice.inbox_sync")
 
 local M = {}
 
@@ -21,6 +22,8 @@ M.priority_down = insert.priority_down
 M.migrate = insert.migrate
 M.refile = insert.refile
 M.archive = insert.archive
+M.inbox_refresh = inbox_sync.refresh
+M.inbox_status = inbox_sync.status
 
 function M.health()
   vim.cmd("checkhealth lattice")
@@ -78,6 +81,7 @@ local function set_keymaps(keymaps)
     { "priority_down", M.priority_down, "Lattice: lower priority" },
     { "refile", M.refile, "Lattice: refile subtree" },
     { "archive", M.archive, "Lattice: archive subtree" },
+    { "inbox_refresh", M.inbox_refresh, "Lattice: refresh inbox" },
   }
   local skipped = {}
   for _, action in ipairs(actions) do
@@ -103,7 +107,7 @@ local function set_keymaps(keymaps)
   end
 end
 
---- @param opts? { root: string, keymaps?: false|table<string, string|false> }
+--- @param opts? { root: string, keymaps?: false|table<string, string|false>, inbox_sync?: { config?: string } }
 function M.setup(opts)
   local options = config.setup(opts)
   local function command(name, fn, desc)
@@ -127,6 +131,8 @@ function M.setup(opts)
   command("LatticeMigrate", M.migrate, "Convert this note's Lattice v0.1 items to Org headings")
   command("LatticeRefile", M.refile, "Move the subtree under the cursor under another heading")
   command("LatticeArchive", M.archive, "Move the subtree under the cursor to the archive note")
+  command("LatticeInboxRefresh", M.inbox_refresh, "Fetch captures from the GitHub inbox repositories")
+  command("LatticeInboxStatus", M.inbox_status, "Show each inbox repository's sync status")
   set_keymaps(options.keymaps)
   -- Incremental refresh: an open dashboard follows saved notes.
   local group = vim.api.nvim_create_augroup("lattice", { clear = true })
@@ -137,6 +143,8 @@ function M.setup(opts)
       dashboard.on_note_saved(args.match)
     end,
   })
+  -- Inbox: fetch once at startup when inbox.json exists (opt-in).
+  inbox_sync.on_startup()
 end
 
 return M

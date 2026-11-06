@@ -20,6 +20,7 @@ local DEFAULT_KEYMAPS = {
   priority_down = "<leader>l-",
   refile = "<leader>lw",
   archive = "<leader>lA",
+  inbox_refresh = "<leader>lR",
 }
 
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
@@ -106,6 +107,15 @@ function M.setup(opts)
   opts = opts or {}
   M.options.root = M.normalize_root(opts.root)
   M.options.keymaps = merge_keymaps(opts.keymaps)
+  M.options.inbox_sync = {}
+  local sync = opts.inbox_sync
+  if sync ~= nil then
+    if type(sync) ~= "table" or (sync.config ~= nil and (type(sync.config) ~= "string" or sync.config == "")) then
+      vim.notify("Lattice: inbox_sync must be { config = \"<path>\" }; using the default path", vim.log.levels.ERROR)
+    elseif sync.config then
+      M.options.inbox_sync.config = vim.fn.fnamemodify(vim.fs.normalize(sync.config), ":p")
+    end
+  end
   return M.options
 end
 

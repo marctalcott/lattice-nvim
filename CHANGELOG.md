@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- GitHub capture inbox, part 1 ([spec](specs/LATTICE_INBOX_SPEC.md) Phase 2): with `~/.config/lattice/inbox.json`, Lattice fetches captures from your inbox repositories at startup and shows how many are new. Adds `:LatticeInboxRefresh` (`<leader>lR`), `:LatticeInboxStatus`, a `lattice inbox` section in `:checkhealth lattice`, and the `inbox_sync.config` setup option. Without the file, nothing changes and Lattice makes no network access.
+
 ## 0.2.6 — 2026-11-04
 
 Bug fixes from a code review of 0.2.5 (#22). No new features or settings.
