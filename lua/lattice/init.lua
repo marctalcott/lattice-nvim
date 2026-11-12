@@ -5,10 +5,20 @@ local health = require("lattice.health")
 local insert = require("lattice.insert")
 local inbox_sync = require("lattice.inbox_sync")
 local inbox_view = require("lattice.inbox_view")
+local keymaps = require("lattice.keymaps")
 
 local M = {}
 
 M.open = dashboard.open
+-- The open keymap shows the overview, switching an open dashboard back to
+-- it; :Lattice only focuses an open dashboard in its current view.
+function M.open_overview()
+  dashboard.open("overview")
+end
+-- The dashboard's week agenda (view 2), not a separate agenda.
+function M.agenda()
+  dashboard.open("week")
+end
 M.refresh = dashboard.refresh
 M.add_todo = insert.add_todo
 M.add_waiting = insert.add_waiting
@@ -31,21 +41,8 @@ function M.health()
   vim.cmd("checkhealth lattice")
 end
 
--- The global normal-mode mapping for `lhs`, ignoring buffer-local ones:
--- maparg() prefers the current buffer's mappings, so ask from a scratch
--- buffer that has none.
-local function global_mapping(lhs)
-  local scratch = vim.api.nvim_create_buf(false, true)
-  local found = vim.api.nvim_buf_call(scratch, function()
-    return vim.fn.maparg(lhs, "n", false, true)
-  end)
-  vim.api.nvim_buf_delete(scratch, { force = true })
-  return not vim.tbl_isempty(found) and found or nil
-end
-
-local function is_lattice(mapping)
-  return mapping ~= nil and (mapping.desc or ""):match("^Lattice: ") ~= nil
-end
+local global_mapping = keymaps.global_mapping
+local is_lattice = keymaps.is_lattice
 
 -- Removes the mappings an earlier setup() created, so a reload with other
 -- keys or `keymaps = false` leaves nothing stale. Mappings the user has
@@ -58,20 +55,24 @@ local function clear_keymaps()
   end
   config.active_keymaps = {}
   health.keymap_conflicts = {}
+  health.keymap_overlaps = {}
 end
 
 -- Sets each keymap unless the key already does something else, in which
--- case it is skipped with a warning (also listed in :LatticeHealth).
--- config.active_keymaps records what was actually mapped.
-local function set_keymaps(keymaps)
+-- case it is skipped with a warning (also listed in :LatticeHealth). A key
+-- that only overlaps another mapping (one is a prefix of the other) is set,
+-- and the overlap is listed in :LatticeHealth. config.active_keymaps
+-- records what was actually mapped.
+local function set_keymaps(keys)
   clear_keymaps()
-  if not keymaps then
+  if not keys then
     return
   end
   local actions = {
-    { "open", M.open, "Lattice: open dashboard" },
+    { "open", M.open_overview, "Lattice: open dashboard" },
+    { "agenda", M.agenda, "Lattice: open week agenda" },
     { "add_todo", M.add_todo, "Lattice: add TODO" },
-    { "add_waiting", M.add_waiting, "Lattice: add Waiting On" },
+    { "add_waiting", M.add_waiting, "Lattice: add WAITING task" },
     { "refresh", M.refresh, "Lattice: refresh" },
     { "next_state", M.next_state, "Lattice: next TODO state" },
     { "prev_state", M.prev_state, "Lattice: previous TODO state" },
@@ -88,12 +89,16 @@ local function set_keymaps(keymaps)
   }
   local skipped = {}
   for _, action in ipairs(actions) do
-    local name, lhs = action[1], keymaps[action[1]]
+    local name, lhs = action[1], keys[action[1]]
     if lhs then
       local existing = global_mapping(lhs)
       if existing == nil or is_lattice(existing) then
         vim.keymap.set("n", lhs, action[2], { desc = action[3] })
         config.active_keymaps[name] = lhs
+        for _, other in ipairs(keymaps.overlaps(lhs)) do
+          health.keymap_overlaps[#health.keymap_overlaps + 1] =
+            { lhs = lhs, action = name, other = other.lhs, desc = other.desc, prefix = other.prefix }
+        end
       else
         health.keymap_conflicts[#health.keymap_conflicts + 1] = { lhs = lhs, action = name }
         skipped[#skipped + 1] = ("%s (%s)"):format(lhs, name)
@@ -110,7 +115,7 @@ local function set_keymaps(keymaps)
   end
 end
 
---- @param opts? { root: string, keymaps?: false|table<string, string|false>, inbox_sync?: { config?: string } }
+--- @param opts? { root: string, keymaps_prefix?: string, keymaps?: false|table<string, string|false>, inbox_sync?: { config?: string } }
 function M.setup(opts)
   local options = config.setup(opts)
   local function command(name, fn, desc)
@@ -119,6 +124,7 @@ function M.setup(opts)
     end, { desc = desc })
   end
   command("Lattice", M.open, "Open the Lattice dashboard")
+  command("LatticeAgenda", M.agenda, "Open the Lattice dashboard's week agenda")
   command("LatticeRefresh", M.refresh, "Rescan notes and .lattice.json")
   command("LatticeHealth", M.health, "Show Lattice config and scan warnings")
   command("LatticeAddTodo", M.add_todo, "Add a TODO heading after the current heading's subtree")

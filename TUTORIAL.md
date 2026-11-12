@@ -2,7 +2,7 @@
 
 This tutorial assumes you know Neovim and Markdown and already have Lattice installed (see the [README](README.md)). It covers daily use and follows a normal workday.
 
-Lattice reads tasks from your Markdown notes and shows them in one dashboard. Your notes are the only record, and Lattice never saves a file for you. All keys below are the defaults; the plugin's own keys start with `<leader>l`.
+Lattice reads tasks from your Markdown notes and shows them in one dashboard. Your notes are the only record, and Lattice never saves a file for you. All keys below are the defaults; the plugin's own keys start with `<leader>o` (`<leader>l` before 0.4.0).
 
 ## 1. What a task looks like
 
@@ -44,7 +44,7 @@ You never have to type the metadata yourself; the commands below write it for yo
 
 ## 2. Morning: check the dashboard
 
-Press `<leader>ll` (`:Lattice`). The **Overview** shows these groups:
+Press `<leader>ol` (`:Lattice`). The **Overview** shows these groups:
 
 | Group | What's in it |
 |---|---|
@@ -64,7 +64,7 @@ A task can appear in two groups at once, for example MY TO DO and OVERDUE.
 | Key | View |
 |---|---|
 | `1` | Overview (the groups above) |
-| `2` | Week agenda, Monday to Sunday. `b` / `f` go to the previous / next week, `.` returns to this week |
+| `2` | Week agenda, Monday to Sunday. `b` / `f` go to the previous / next week, `.` returns to this week. `<leader>oa` (`:LatticeAgenda`) opens the dashboard straight here from any note |
 | `3` | Every open task, sorted by priority, then deadline |
 | `4` | Projects: open and done counts plus the next action. `Enter` lists that project's tasks |
 
@@ -108,8 +108,8 @@ Edits go into the note's buffer, which opens in the background if needed. They a
 
 Write meeting notes as usual. When an action item comes up, add it with a key instead of typing the syntax.
 
-- **`<leader>lt`**: prompts for text and adds a TODO heading at the level of the heading you're in, after its subtree (like Org's `C-S-RET`).
-- **`<leader>ld`**: prompts for an optional person, then the item, and adds a `WAITING` heading with an `:ASSIGNED:` drawer.
+- **`<leader>ot`**: prompts for text and adds a TODO heading at the level of the heading you're in, after its subtree (like Org's `C-S-RET`).
+- **`<leader>oW`**: prompts for an optional person, then the item, and adds a `WAITING` heading with an `:ASSIGNED:` drawer.
 
 `Esc` at any prompt leaves the buffer untouched.
 
@@ -117,11 +117,11 @@ Write meeting notes as usual. When an action item comes up, add it with a key in
 
 | Key | Does |
 |---|---|
-| `<leader>ln` / `<leader>lp` | Next / previous state: none → TODO → NEXT → WAITING → DONE → CANCELED → none. This also turns a plain heading into a task |
-| `<leader>ls` | Pick any state from a list |
-| `<leader>lx` | Toggle the checkbox under the cursor. Parent boxes and the `[n/m]` progress counts update automatically |
-| `<leader>lS` / `<leader>lD` | Set SCHEDULED / DEADLINE |
-| `<leader>l+` / `<leader>l-` | Priority up / down. Going past A or C removes it |
+| `<leader>on` / `<leader>op` | Next / previous state: none → TODO → NEXT → WAITING → DONE → CANCELED → none. This also turns a plain heading into a task |
+| `<leader>os` | Pick any state from a list |
+| `<leader>ox` | Toggle the checkbox under the cursor. Parent boxes and the `[n/m]` progress counts update automatically |
+| `<leader>oS` / `<leader>oD` | Set SCHEDULED / DEADLINE |
+| `<leader>o+` / `<leader>o-` | Priority up / down. Going past A or C removes it |
 
 **Date prompts** accept:
 
@@ -151,8 +151,8 @@ When you mark it DONE, Lattice moves the date to the next occurrence and keeps t
 
 ## 6. End of day: tidy up
 
-- **Refile** with `<leader>lw`. It moves the heading under the cursor, with everything below it, under any heading in any note. Targets are listed like `note.md › Etna › Releases`.
-- **Archive** with `<leader>lA`. It moves the heading under the cursor, with everything below it, to `<note>_archive.md` with Org's archive properties. Archive files aren't scanned, so archived tasks leave the dashboard.
+- **Refile** with `<leader>ow`. It moves the heading under the cursor, with everything below it, under any heading in any note. Targets are listed like `note.md › Etna › Releases`.
+- **Archive** with `<leader>oA`. It moves the heading under the cursor, with everything below it, to `<note>_archive.md` with Org's archive properties. Archive files aren't scanned, so archived tasks leave the dashboard.
 - **Process the Inbox.** Captures you dropped into `Inbox/` (for example from your phone) show up as INBOX rows. Open each one, then move the file into your folder structure; it leaves the list on the next refresh.
 
 As with the other edits, refile and archive change buffers only, so save both notes afterwards.
@@ -168,7 +168,7 @@ As with the other edits, refile and archive change buffers only, so save both no
   - a heading inside a code block
   - a file excluded from scanning
 
-  The same command also lists any `<leader>l…` keys skipped because another mapping already used them.
-- **LazyVim note:** `<leader>l` on its own opens `:Lazy`, so after typing it there's a short pause before the next key is read. Rebind the keys with `opts.keymaps` if that bothers you.
+  The same command also lists any `<leader>o…` keys skipped because another mapping already used them.
+- **LazyVim note:** core LazyVim leaves `<leader>o` free. The optional Overseer extra uses `<leader>ot` and `<leader>ow`, so Lattice skips its add TODO and refile keys there; give them other keys with `opts.keymaps` (for example `add_todo = "<leader>oT"`).
 
 For every detail and option, see the [README](README.md) and `:help lattice`.

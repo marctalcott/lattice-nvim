@@ -31,7 +31,7 @@ return {
 }
 ```
 
-lazy.nvim calls `require("lattice").setup(opts)` for you. If your employer requires a security review of code before it runs on a work machine, pin a reviewed commit (for example `commit = "<sha>"`), or clone the reviewed source and point lazy.nvim at it with `dir = "~/path/to/lattice-nvim"` in place of the repository name.
+lazy.nvim calls `require("lattice").setup(opts)` for you. Lattice's keys start with `<leader>o` (see [Commands and keymaps](#commands-and-keymaps)). If your employer requires a security review of code before it runs on a work machine, pin a reviewed commit (for example `commit = "<sha>"`), or clone the reviewed source and point lazy.nvim at it with `dir = "~/path/to/lattice-nvim"` in place of the repository name.
 
 Without lazy.nvim, put the repository on your `runtimepath` and call:
 
@@ -130,7 +130,7 @@ These items take no Org metadata (planning lines, drawers, tags). Lattice never 
 
 ## Dashboard
 
-`:Lattice` (default `<leader>ll`) opens the dashboard in the current window. For the two notes in [`examples/`](examples) with [`examples/.lattice.json`](examples/.lattice.json), on November 2, 2026, the overview shows:
+`:Lattice` (default `<leader>ol`) opens the dashboard in the current window. `:LatticeAgenda` (`<leader>oa`) opens it straight in the week agenda (view `2` below). For the two notes in [`examples/`](examples) with [`examples/.lattice.json`](examples/.lattice.json), on November 2, 2026, the overview shows:
 
 ```
 LATTICE                                                                          Mon Nov 02
@@ -198,7 +198,7 @@ Enter  Open note    r  Refresh    q  Close    ?  Help
 | Key | View | Org equivalent |
 |-----|------|----------------|
 | `1` | **Overview**: the groups above | |
-| `2` | **Week agenda**: one section per day, Monday to Sunday. Each day lists tasks scheduled or due that day, repeats included. Today also lists what is still open from earlier (`Sched. 4x`, `2 d. ago`) and deadlines inside their warning period (`In 3 d.`). Timed entries come first, then by priority. `b` / `f` go to the previous / next week, `.` back to this week. | `C-c a a` |
+| `2` | **Week agenda** (also `<leader>oa` from any buffer): one section per day, Monday to Sunday. Each day lists tasks scheduled or due that day, repeats included. Today also lists what is still open from earlier (`Sched. 4x`, `2 d. ago`) and deadlines inside their warning period (`In 3 d.`). Timed entries come first, then by priority. `b` / `f` go to the previous / next week, `.` back to this week. | `C-c a a` |
 | `3` | **All TODOs**: every open task, by priority (a task without one counts as the default, `B`), then deadline | `C-c a t` |
 | `4` | **Projects**: each project with its open and done counts, `:PROJECT_STATUS:` and next action (its first `NEXT` task, else its most urgent open task). `Enter` lists the project's TODOs. | |
 
@@ -241,8 +241,8 @@ If a task's line moved since the last scan, Lattice finds it again by its title.
 
 Run these from a Markdown note. They edit only that buffer and never save it. Both add Org headings.
 
-- `<leader>lt` or `:LatticeAddTodo` asks for the task and adds `## TODO <task>`, like Org's `C-S-RET`: at the level of the heading the cursor is in, after that heading's subtree. With no heading above the cursor, it adds a level-2 heading on the line below (after any front matter). It uses the first active state of the workflow in effect there (project, `:WORKFLOW:`, front matter `todo:`, or default), so under `# Etna` it adds `## BACKLOG <task>`.
-- `<leader>ld` or `:LatticeAddWaiting` asks who you're waiting on (optional; press Enter to skip), then what for. It adds `## WAITING <task>` in the same place, with the person in a drawer:
+- `<leader>ot` or `:LatticeAddTodo` asks for the task and adds `## TODO <task>`, like Org's `C-S-RET`: at the level of the heading the cursor is in, after that heading's subtree. With no heading above the cursor, it adds a level-2 heading on the line below (after any front matter). It uses the first active state of the workflow in effect there (project, `:WORKFLOW:`, front matter `todo:`, or default), so under `# Etna` it adds `## BACKLOG <task>`.
+- `<leader>oW` or `:LatticeAddWaiting` asks who you're waiting on (optional; press Enter to skip), then what for. It adds `## WAITING <task>` in the same place, with the person in a drawer:
 
   ```markdown
   ## WAITING Venue reply
@@ -257,13 +257,13 @@ Run these from a Markdown note. They edit only that buffer and never save it. Bo
 
 ## Changing an item's state
 
-Like org-mode's `S-Right` / `S-Left`, `<leader>ln` (`:LatticeNextState`) and `<leader>lp` (`:LatticePrevState`) step the heading under the cursor through its workflow. With `TODO NEXT | DONE CANCELED`:
+Like org-mode's `S-Right` / `S-Left`, `<leader>on` (`:LatticeNextState`) and `<leader>op` (`:LatticePrevState`) step the heading under the cursor through its workflow. With `TODO NEXT | DONE CANCELED`:
 
 ```
 ## Write docs  →  ## TODO Write docs  →  ## NEXT Write docs  →  ## DONE Write docs  →  ## CANCELED Write docs  →  ## Write docs
 ```
 
-`<leader>lp` goes the other way. The details:
+`<leader>op` goes the other way. The details:
 
 - It works on `#` headings. Priority, tags and closing `#`s stay as they are.
 - It uses the workflow in effect on that line: a `:WORKFLOW:` property, the project's workflow, the note's front matter `todo:`, or the default. A heading stays within the sequence that holds its state, so `BUG` steps to `FIXED` and then back to no state. A heading with no state starts on the first sequence.
@@ -277,12 +277,12 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 
 | Key | Command | Org equivalent | What it does |
 |-----|---------|----------------|--------------|
-| `<leader>ls` | `:LatticeSetState` | `C-c C-t` | Pick any state of the heading's workflow, or none |
-| `<leader>ln` / `<leader>lp` | `:LatticeNextState` / `:LatticePrevState` | `S-Right` / `S-Left` | Step to the next or previous state (see [above](#changing-an-items-state)) |
-| `<leader>lx` | `:LatticeToggleCheckbox` | `C-c C-c` | Toggle the checkbox under the cursor |
-| `<leader>lS` | `:LatticeSchedule` | `C-c C-s` | Set or remove `SCHEDULED` |
-| `<leader>lD` | `:LatticeDeadline` | `C-c C-d` | Set or remove `DEADLINE` |
-| `<leader>l+` / `<leader>l-` | `:LatticePriorityUp` / `:LatticePriorityDown` | `S-Up` / `S-Down` | Raise or lower `[#A]` |
+| `<leader>os` | `:LatticeSetState` | `C-c C-t` | Pick any state of the heading's workflow, or none |
+| `<leader>on` / `<leader>op` | `:LatticeNextState` / `:LatticePrevState` | `S-Right` / `S-Left` | Step to the next or previous state (see [above](#changing-an-items-state)) |
+| `<leader>ox` | `:LatticeToggleCheckbox` | `C-c C-c` | Toggle the checkbox under the cursor |
+| `<leader>oS` | `:LatticeSchedule` | `C-c C-s` | Set or remove `SCHEDULED` |
+| `<leader>oD` | `:LatticeDeadline` | `C-c C-d` | Set or remove `DEADLINE` |
+| `<leader>o+` / `<leader>o-` | `:LatticePriorityUp` / `:LatticePriorityDown` | `S-Up` / `S-Down` | Raise or lower `[#A]` |
 | | `:LatticeMigrate` | | Convert this note's Lattice v0.1 items to Org headings |
 
 **Changing state**, by any of the commands above:
@@ -305,52 +305,74 @@ These follow Org-mode's commands and edit only the current buffer, as one undo s
 
 Both work on the heading under the cursor and everything below it (its subtree), as in Org. They change only buffers, both notes are checked before either is changed, and nothing is saved for you.
 
-- **`<leader>lw` / `:LatticeRefile`** (Org's `C-c C-w`) asks for a target among every heading in every note, shown as `note.md › Etna › Releases`, or "end of note". The subtree moves to the end of the target's subtree, one level below it, with all its headings re-levelled. A subtree can't be refiled under itself, or deeper than `######`.
-- **`<leader>lA` / `:LatticeArchive`** (Org's `C-c C-x C-a`) moves the subtree to the archive note, `<note>_archive.md` beside it by default (`archive.location`). It becomes a top-level heading, with Org's `:ARCHIVE_TIME:`, `:ARCHIVE_FILE:`, `:ARCHIVE_OLPATH:`, `:ARCHIVE_CATEGORY:` and `:ARCHIVE_TODO:` properties. A new archive note starts with a line saying where its entries came from. Archive notes (`**/*_archive.md`) are excluded from scanning by default, so archived tasks leave the dashboard. If `archive.location` points into a folder that doesn't exist, Lattice says so and changes nothing; it never creates folders.
+- **`<leader>ow` / `:LatticeRefile`** (Org's `C-c C-w`) asks for a target among every heading in every note, shown as `note.md › Etna › Releases`, or "end of note". The subtree moves to the end of the target's subtree, one level below it, with all its headings re-levelled. A subtree can't be refiled under itself, or deeper than `######`.
+- **`<leader>oA` / `:LatticeArchive`** (Org's `C-c C-x C-a`) moves the subtree to the archive note, `<note>_archive.md` beside it by default (`archive.location`). It becomes a top-level heading, with Org's `:ARCHIVE_TIME:`, `:ARCHIVE_FILE:`, `:ARCHIVE_OLPATH:`, `:ARCHIVE_CATEGORY:` and `:ARCHIVE_TODO:` properties. A new archive note starts with a line saying where its entries came from. Archive notes (`**/*_archive.md`) are excluded from scanning by default, so archived tasks leave the dashboard. If `archive.location` points into a folder that doesn't exist, Lattice says so and changes nothing; it never creates folders.
 
 ## Commands and keymaps
 
 | Command              | Default key  | Action                                                  |
 |----------------------|--------------|---------------------------------------------------------|
-| `:Lattice`           | `<leader>ll` | Open or focus the dashboard                             |
-| `:LatticeRefresh`    | `<leader>lr` | Rescan notes and reread `.lattice.json`                 |
-| `:LatticeAddTodo`    | `<leader>lt` | Add a `## TODO` heading                                 |
-| `:LatticeAddWaiting` | `<leader>ld` | Add a `## WAITING` heading with `:ASSIGNED:`            |
-| `:LatticeNextState`  | `<leader>ln` | Move the heading under the cursor to its next state     |
-| `:LatticePrevState`  | `<leader>lp` | Move the heading under the cursor to its previous state |
-| `:LatticeSetState`   | `<leader>ls` | Choose the heading's state                              |
-| `:LatticeToggleCheckbox` | `<leader>lx` | Toggle the checkbox under the cursor                |
-| `:LatticeSchedule`   | `<leader>lS` | Set or remove `SCHEDULED`                               |
-| `:LatticeDeadline`   | `<leader>lD` | Set or remove `DEADLINE`                                |
-| `:LatticePriorityUp` / `:LatticePriorityDown` | `<leader>l+` / `<leader>l-` | Raise or lower `[#A]` |
+| `:Lattice`           | `<leader>ol` | Open or focus the dashboard. The key shows the overview; `:Lattice` keeps the current view |
+| `:LatticeAgenda`     | `<leader>oa` | Open the dashboard in its week agenda (view `2`)        |
+| `:LatticeRefresh`    | `<leader>or` | Rescan notes and reread `.lattice.json`                 |
+| `:LatticeAddTodo`    | `<leader>ot` | Add a `## TODO` heading                                 |
+| `:LatticeAddWaiting` | `<leader>oW` | Add a `## WAITING` heading with `:ASSIGNED:`            |
+| `:LatticeNextState`  | `<leader>on` | Move the heading under the cursor to its next state     |
+| `:LatticePrevState`  | `<leader>op` | Move the heading under the cursor to its previous state |
+| `:LatticeSetState`   | `<leader>os` | Choose the heading's state                              |
+| `:LatticeToggleCheckbox` | `<leader>ox` | Toggle the checkbox under the cursor                |
+| `:LatticeSchedule`   | `<leader>oS` | Set or remove `SCHEDULED`                               |
+| `:LatticeDeadline`   | `<leader>oD` | Set or remove `DEADLINE`                                |
+| `:LatticePriorityUp` / `:LatticePriorityDown` | `<leader>o+` / `<leader>o-` | Raise or lower `[#A]` |
 | `:LatticeMigrate`    |              | Convert this note's v0.1 items to Org headings          |
-| `:LatticeRefile`     | `<leader>lw` | Move the subtree under another heading                  |
-| `:LatticeArchive`    | `<leader>lA` | Move the subtree to the archive note                    |
-| `:LatticeInbox`      | `<leader>li` | Open the capture inbox ([GitHub capture inbox](#github-capture-inbox)) |
-| `:LatticeInboxRefresh` | `<leader>lR` | Fetch captures from the GitHub inbox repositories ([GitHub capture inbox](#github-capture-inbox)) |
+| `:LatticeRefile`     | `<leader>ow` | Move the subtree under another heading                  |
+| `:LatticeArchive`    | `<leader>oA` | Move the subtree to the archive note                    |
+| `:LatticeInbox`      | `<leader>oi` | Open the capture inbox ([GitHub capture inbox](#github-capture-inbox)) |
+| `:LatticeInboxRefresh` | `<leader>oR` | Fetch captures from the GitHub inbox repositories ([GitHub capture inbox](#github-capture-inbox)) |
 | `:LatticeInboxStatus` |             | Show each inbox repository's sync status                |
 | `:LatticeHealth`     |              | Same as `:checkhealth lattice`; see [Troubleshooting](#troubleshooting) |
 
-Lua API: `require("lattice")` provides `setup`, `open`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate`, `refile`, `archive`, `inbox`, `inbox_refresh`, `inbox_status` and `health`.
+Lua API: `require("lattice")` provides `setup`, `open`, `open_overview`, `agenda`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `migrate`, `refile`, `archive`, `inbox`, `inbox_refresh`, `inbox_status` and `health`.
 
-Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, and lists the key in `:LatticeHealth`. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys:
+Upper and lower case are different keys, as in Org:
+
+- `<leader>ol` **dashboard** (who owes what, overdue, projects) and `<leader>oa` **agenda** (the same dashboard's week view, by day). Not a second agenda: both open the one dashboard, switching its view if it is already open.
+- `<leader>oa` agenda and `<leader>oA` **archive**.
+- `<leader>ow` **refile** (Org's `C-c C-w`) and `<leader>oW` add a **WAITING** task.
+- `<leader>oS` **schedule** (Org's `C-c C-s`, when to start) and `<leader>oD` **deadline** (Org's `C-c C-d`, when it is due).
+
+The default prefix is `<leader>o` (Lattice before 0.4.0 used `<leader>l`, which LazyVim maps to `:Lazy`). Change it with `keymaps_prefix`. It uses your own `mapleader`.
+
+Lattice never replaces a mapping you already have. If one of its default keys is already mapped when `setup` runs, Lattice leaves your mapping alone, warns once, sets its other keys, and lists the skipped key in `:LatticeHealth`. `:LatticeHealth` also warns when a Lattice key overlaps another mapping (one is a prefix of the other, so one of them waits `timeoutlen`), and when a plugin set the same key after Lattice. The dashboard help shows only the keys Lattice actually mapped. Mappings local to one buffer don't count as conflicts. Running `setup` again, for example on a config reload, first removes the keys the previous run created. A value that is neither a key string nor `false` is reported and ignored. To change or turn off keys (a key in `keymaps` is the full key, not a suffix of the prefix):
 
 ```lua
 opts = {
   root = "~/Documents/WorkNotes",
+  keymaps_prefix = "<leader>n", -- every default moves: <leader>nl, <leader>na, …
   keymaps = {
-    open = "<leader>nl",
-    add_todo = "<leader>nt",
-    add_waiting = "<leader>nw",
-    next_state = "<leader>nn",
-    prev_state = "<leader>np",
+    add_waiting = "<leader>nd", -- one key elsewhere
     refresh = false, -- no mapping
   },
   -- or keymaps = false to set none
 }
 ```
 
-LazyVim maps `<leader>l` alone to `:Lazy`. The `<leader>l…` defaults still work, but pressing `<leader>l` by itself then waits `timeoutlen` before opening Lazy. Pick a different prefix if that bothers you.
+Action names: `open`, `agenda`, `refresh`, `add_todo`, `add_waiting`, `next_state`, `prev_state`, `set_state`, `toggle_checkbox`, `schedule`, `deadline`, `priority_up`, `priority_down`, `refile`, `archive`, `inbox`, `inbox_refresh`.
+
+**Keeping the keys from before 0.4.0:**
+
+```lua
+keymaps_prefix = "<leader>l",
+keymaps = { add_waiting = "<leader>ld", agenda = false },
+```
+
+**LazyVim.** Core LazyVim (checked against v16.0.0) maps nothing under `<leader>o`. Its optional Overseer extra maps `<leader>ow`, `<leader>oo` and `<leader>ot`; with it installed, Lattice keeps Overseer's keys and skips refile and add TODO. To give those two other keys:
+
+```lua
+keymaps = { add_todo = "<leader>oT", refile = "<leader>oF" },
+```
+
+which-key lists each key with its description (`Lattice: open week agenda`, …). To name the group, add `{ "<leader>o", group = "lattice" }` to which-key's `spec` (the Overseer extra names it "overseer").
 
 ## Configuration: `.lattice.json`
 
@@ -447,12 +469,12 @@ The [Send to GitHub](drafts/README.md) Drafts action uploads captures from your 
 ```
 
 - Only repositories whose `notes_root` is the notes root you passed to `setup` are fetched, so work captures stay with work notes. Set `"enabled": false` to skip one.
-- At startup a notification shows how many new captures arrived, including `0 new captures`. `:LatticeInboxRefresh` (`<leader>lR`) fetches again and stays quiet unless something fails. `:LatticeInboxStatus` shows each repository's state, last error and any removals still pending.
+- At startup a notification shows how many new captures arrived, including `0 new captures`. `:LatticeInboxRefresh` (`<leader>oR`) fetches again and stays quiet unless something fails. `:LatticeInboxStatus` shows each repository's state, last error and any removals still pending.
 - Lattice uses your own Git authentication and never prompts. To keep two github.com accounts apart, give the work one an SSH host alias (`Host github-work` with its own `IdentityFile` in `~/.ssh/config`) and use it in `url`. Don't put tokens in `url`; Lattice rejects them.
 - Each repository is mirrored in a shallow clone under `stdpath("cache")/lattice/inbox`, which can be deleted at any time. Captures stay on GitHub until they're processed.
 - Use another config path with `setup({ inbox_sync = { config = "~/path/inbox.json" } })`.
 
-`:LatticeInbox` (`<leader>li`) lists captures by repository, newest first, with a title suggested from the first sentence. `Enter` on a repository folds it; on a capture it shows a read-only preview with the suggested title and folder.
+`:LatticeInbox` (`<leader>oi`) lists captures by repository, newest first, with a title suggested from the first sentence. `Enter` on a repository folds it; on a capture it shows a read-only preview with the suggested title and folder.
 
 | Key     | Action                                                              |
 |---------|---------------------------------------------------------------------|
@@ -505,7 +527,7 @@ Run `:LatticeHealth` (or `:checkhealth lattice`). It runs a fresh read-only scan
 - each invalid date, with its file (relative to the root) and line number
 - every warning about a note (timestamps, drawers, states, priorities, duplicate IDs), with file and line
 - whether the Markdown Tree-sitter parser loaded, the workflows, and how many items still use v0.1 syntax
-- any default keymaps skipped because the key was already mapped
+- any default keymaps skipped because the key was already mapped, keys that overlap another mapping, and keys another plugin replaced after setup
 
 Common problems:
 
@@ -518,7 +540,8 @@ Common problems:
 | A whole folder is missing                 | It may be excluded, a symlink, or unreadable. `:LatticeHealth` lists unreadable paths.       |
 | `Enter` warns that a file "no longer exists" | The note was moved or deleted since the last scan. Press `r`.                            |
 | Neovim quits ("KILL") when opening or scanning Markdown | A Tree-sitter parser binary is broken (on macOS, often `markdown.so` replaced in place). Delete it, for example `rm -rf ~/.local/share/nvim/lazy/nvim-treesitter/parser ~/.local/share/nvim/site/parser`, then run `:TSUpdate` from a fresh Neovim. |
-| `<leader>l…` keys do nothing              | Another mapping may own the key. See `:LatticeHealth`, then choose different keys.          |
+| `<leader>o…` keys do nothing              | Another mapping may own the key (the Overseer extra uses `<leader>ot` and `<leader>ow`). See `:LatticeHealth`, then choose different keys. |
+| `<leader>l…` keys stopped working after updating | 0.4.0 moved the defaults to `<leader>o…`. See [Commands and keymaps](#commands-and-keymaps) to keep the old ones. |
 
 ## Development
 

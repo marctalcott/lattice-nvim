@@ -37,7 +37,7 @@ local function at(cursor)
   vim.api.nvim_win_set_cursor(0, { cursor, 0 })
 end
 
--- TODO headings (<leader>lt) -------------------------------------------------
+-- TODO headings (<leader>ot) -------------------------------------------------
 
 test("adds a TODO heading at the enclosing heading's level, after its subtree", function()
   reset(nil)
@@ -117,7 +117,7 @@ test("a normal insertion gives no warning", function()
   eq(H.last_notify().message, "sentinel")
 end)
 
--- WAITING headings (<leader>ld) -----------------------------------------------
+-- WAITING headings (<leader>oW) -----------------------------------------------
 
 test("adds a WAITING heading with the person in an :ASSIGNED: drawer", function()
   reset(nil)
