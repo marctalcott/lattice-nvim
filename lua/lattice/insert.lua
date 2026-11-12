@@ -218,7 +218,8 @@ function M.cycle(buf, row, cfg, direction)
     local word = text and text:match("^%[[ xX%-]%][ \t]+(%S.*)$") or text
     local has_state = word and tasks.split_state(word, kws) ~= nil
     if text and not has_state then
-      return nil, "list items aren't tasks in Org; put the cursor on a heading (## TODO …), or use <leader>lt to add one"
+      local key = config.active_keymaps.add_todo or ":LatticeAddTodo"
+      return nil, ("list items aren't tasks in Org; put the cursor on a heading (## TODO …), or use %s to add one"):format(key)
     end
   end
   local new_line, start, stop, state, inserted = M.cycle_line(line, kws, direction)

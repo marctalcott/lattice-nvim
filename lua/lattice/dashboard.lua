@@ -296,6 +296,7 @@ local function help_lines(keymaps)
     "",
     "COMMANDS",
     "  :Lattice            Open the dashboard",
+    "  :LatticeAgenda      Open the dashboard's week agenda",
     "  :LatticeRefresh     Rescan notes and reread .lattice.json",
     "  :LatticeHealth      Show config, unreadable files, invalid dates",
     "  :LatticeAddTodo     Add a ## TODO heading",
@@ -313,9 +314,10 @@ local function help_lines(keymaps)
     local mapped = {}
     for _, item in ipairs({
       { "open", "dashboard" },
+      { "agenda", "week agenda" },
       { "refresh", "refresh" },
       { "add_todo", "add TODO" },
-      { "add_waiting", "add Waiting On" },
+      { "add_waiting", "add WAITING" },
       { "next_state", "next state" },
       { "prev_state", "previous state" },
       { "set_state", "choose state" },
@@ -958,8 +960,10 @@ local function create_buffer()
   return buf
 end
 
---- Opens the dashboard, or focuses it if it already exists.
-function M.open()
+--- Opens the dashboard, or focuses it if it already exists. With `view`
+--- ("overview", "week", "todo", "projects"), shows that view, as pressing
+--- 1-4 in the dashboard would; without it, an open dashboard keeps its view.
+function M.open(view)
   local current = vim.api.nvim_get_current_buf()
 
   if buffer_ready() then
@@ -970,9 +974,15 @@ function M.open()
       state.prev_buf = current
       vim.api.nvim_win_set_buf(0, state.buf)
     end
+    if view and view ~= state.view then
+      M.set_view(view)
+    end
     return
   end
 
+  if view then
+    state.view = view
+  end
   state.prev_buf = current
   state.buf = create_buffer()
   state.result = scanner.collect(config.options.root)

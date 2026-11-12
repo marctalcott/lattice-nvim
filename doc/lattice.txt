@@ -41,16 +41,19 @@ Without a plugin manager: >lua
                                                               *lattice.setup()*
 setup({opts})
     {root}     (string, required) Notes root. Lattice never guesses it.
-    {keymaps}  (table|false) Keys for `open`, `refresh`, `add_todo`,
-               `add_waiting`, `next_state`, `prev_state`, `set_state`,
-               `toggle_checkbox`, `schedule`, `deadline`, `priority_up`,
-               `priority_down`, `refile`, `archive`. Each may be a key
-               string or false. Set
-               `keymaps = false` to create none. Defaults: `<leader>ll`,
-               `<leader>lr`, `<leader>lt`, `<leader>ld`, `<leader>ln`,
-               `<leader>lp`, `<leader>ls`, `<leader>lx`, `<leader>lS`,
-               `<leader>lD`, `<leader>l+`, `<leader>l-`, `<leader>lw`,
-               `<leader>lA`.
+    {keymaps_prefix}  (string) Prefix of the default keys. Default
+               `<leader>o` (before 0.4.0: `<leader>l`, which LazyVim
+               maps to :Lazy). Uses your actual |mapleader|.
+    {keymaps}  (table|false) Keys for `open`, `agenda`, `refresh`,
+               `add_todo`, `add_waiting`, `next_state`, `prev_state`,
+               `set_state`, `toggle_checkbox`, `schedule`, `deadline`,
+               `priority_up`, `priority_down`, `refile`, `archive`,
+               `inbox`, `inbox_refresh`. Each may be a full key string
+               (not a suffix of the prefix) or false. Set
+               `keymaps = false` to create none. Default suffixes, in
+               that order: `l a r t W n p s x S D + - w A i R`.
+               Case matters: `a` agenda / `A` archive, `w` refile /
+               `W` WAITING, `S` schedule / `D` deadline.
 
 ==============================================================================
 3. NOTE FORMAT                                                 *lattice-format*
@@ -178,11 +181,11 @@ DONE, CANCELED, no keyword.
 Editing commands follow Org and change only the current buffer, as one
 undo step; nothing is saved. A stale or repeated command is refused.
 
-:LatticeSetState      Choose a state (C-c C-t).               <leader>ls
-:LatticeToggleCheckbox  Toggle a checkbox (C-c C-c).          <leader>lx
-:LatticeSchedule      Set/remove SCHEDULED (C-c C-s).         <leader>lS
-:LatticeDeadline      Set/remove DEADLINE (C-c C-d).          <leader>lD
-:LatticePriorityUp / :LatticePriorityDown  (S-Up/S-Down).  <leader>l+ / l-
+:LatticeSetState      Choose a state (C-c C-t).               <leader>os
+:LatticeToggleCheckbox  Toggle a checkbox (C-c C-c).          <leader>ox
+:LatticeSchedule      Set/remove SCHEDULED (C-c C-s).         <leader>oS
+:LatticeDeadline      Set/remove DEADLINE (C-c C-d).          <leader>oD
+:LatticePriorityUp / :LatticePriorityDown  (S-Up/S-Down).  <leader>o+ / o-
 :LatticeMigrate       Convert this note's v0.1 items to Org headings.
 
 - Completing adds `CLOSED: [...]` when `logging.done` is "time" (off by
@@ -200,10 +203,10 @@ undo step; nothing is saved. A stale or repeated command is refused.
 - Priority: none starts at the default; past either end removes it.
 
                                                              *lattice-refile*
-:LatticeRefile   (<leader>lw, Org's C-c C-w) moves the subtree under the
+:LatticeRefile   (<leader>ow, Org's C-c C-w) moves the subtree under the
 cursor under a heading chosen from every note, re-levelled, or to the end
 of a note.
-:LatticeArchive  (<leader>lA) moves it to `archive.location` (default
+:LatticeArchive  (<leader>oA) moves it to `archive.location` (default
 "%s_archive.md" beside the note) as a top-level heading with Org's
 ARCHIVE_TIME, ARCHIVE_FILE, ARCHIVE_OLPATH, ARCHIVE_CATEGORY and
 ARCHIVE_TODO properties. Archive notes are excluded from scanning by
@@ -213,34 +216,54 @@ default. Both change buffers only; both notes are checked first.
 6. COMMANDS AND KEYMAPS                                      *lattice-commands*
 
                                                                     *:Lattice*
-:Lattice            Open or focus the dashboard.          (<leader>ll)
+:Lattice            Open or focus the dashboard. The key   (<leader>ol)
+                    shows the overview, switching an open
+                    dashboard back to it; :Lattice keeps the
+                    current view.
+                                                              *:LatticeAgenda*
+:LatticeAgenda      Open the dashboard's week agenda      (<leader>oa)
+                    (view 2): scheduled tasks and deadlines
+                    by day. An open dashboard switches to it.
                                                              *:LatticeRefresh*
-:LatticeRefresh     Rescan notes and .lattice.json.       (<leader>lr)
+:LatticeRefresh     Rescan notes and .lattice.json.       (<leader>or)
                                                              *:LatticeAddTodo*
-:LatticeAddTodo     Add a ## TODO heading.                (<leader>lt)
+:LatticeAddTodo     Add a ## TODO heading.                (<leader>ot)
                                                           *:LatticeAddWaiting*
-:LatticeAddWaiting  Add a ## WAITING heading.             (<leader>ld)
+:LatticeAddWaiting  Add a ## WAITING heading.             (<leader>oW)
                                                            *:LatticeNextState*
-:LatticeNextState   Next state of the item under cursor.  (<leader>ln)
+:LatticeNextState   Next state of the item under cursor.  (<leader>on)
                                                            *:LatticePrevState*
-:LatticePrevState   Previous state of the item.           (<leader>lp)
+:LatticePrevState   Previous state of the item.           (<leader>op)
                                                               *:LatticeHealth*
                                                                *:LatticeInbox*
 :LatticeInbox       Open the capture inbox: f file, t task,
-                    o open, D dismiss, R fetch, q close.  (<leader>li)
+                    o open, D dismiss, R fetch, q close.  (<leader>oi)
                     Saving a filed note removes its capture
                     from GitHub; D asks first.
                                                         *:LatticeInboxRefresh*
 :LatticeInboxRefresh  Fetch captures from the GitHub inbox
-                    repositories in inbox.json.           (<leader>lR)
+                    repositories in inbox.json.           (<leader>oR)
                                                          *:LatticeInboxStatus*
 :LatticeInboxStatus Show each inbox repository's status.
 :LatticeHealth      Same as `:checkhealth lattice`.
 
 If a default key already has a global mapping, Lattice keeps your mapping,
-warns once, and lists the key in |:LatticeHealth|. Running setup() again
-removes the keys the previous run created. Invalid keymap values are
-reported and ignored.
+warns once, and lists the key in |:LatticeHealth|; its other keys are still
+set. |:LatticeHealth| also warns when a Lattice key overlaps another mapping
+(one is a prefix of the other, so one waits for 'timeoutlen'), and when a
+plugin replaced a Lattice key after setup. Running setup() again removes the
+keys the previous run created. Invalid keymap values are reported and
+ignored.
+
+LazyVim: core LazyVim (checked against v16.0.0) maps nothing under
+`<leader>o`. Its Overseer extra maps `<leader>ow`, `<leader>oo` and
+`<leader>ot`; with it, Lattice skips refile and add_todo. Move them with,
+for example, `keymaps = { add_todo = "<leader>oT", refile = "<leader>oF" }`.
+which-key shows each key's description. To name the group, add
+`{ "<leader>o", group = "lattice" }` to which-key's spec.
+
+To keep the keys from before 0.4.0: `keymaps_prefix = "<leader>l"` with
+`keymaps = { add_waiting = "<leader>ld", agenda = false }`.
 
 ==============================================================================
 7. CONFIGURATION                                               *lattice-config*
@@ -287,6 +310,7 @@ error and scans nothing.
 
 |:LatticeHealth| shows the root, config status, the Markdown parser,
 counts, unreadable paths, invalid dates and note warnings with file and
-line, workflows, v0.1 syntax in use, and skipped keymaps.
+line, workflows, v0.1 syntax in use, and skipped, overlapping or replaced
+keymaps.
 
  vim:tw=78:ts=8:ft=help:norl:

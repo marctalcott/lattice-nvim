@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0 — 2026-11-12 — Default keys move to `<leader>o`
+
+Implements [`specs/LATTICE_KEYBINDINGS_SPEC.md`](specs/LATTICE_KEYBINDINGS_SPEC.md) with its Amendment 1. LazyVim maps `<leader>l` to `:Lazy`, so Lattice's default prefix moves to `<leader>o`, which core LazyVim leaves free.
+
+### Changed
+
+- **Default keys are now `<leader>o…`** (breaking for anyone using the defaults). Same letters as before, except add WAITING: `<leader>ld` → `<leader>oW`. Case matters: `a` agenda / `A` archive, `w` refile / `W` WAITING, `S` schedule / `D` deadline. Nothing is mapped under `<leader>l` any more.
+- Which-key descriptions: add WAITING is now "Lattice: add WAITING task".
+- The hint for a plain list item names your actual add TODO key (or `:LatticeAddTodo`) instead of `<leader>lt`.
+
+### Added
+
+- `<leader>oa` / `:LatticeAgenda` opens the dashboard in its existing week agenda view (view `2`). With a dashboard already open, it switches that dashboard; `<leader>ol` switches it back to the overview. `:Lattice` still keeps the current view.
+- `keymaps_prefix` setup option (default `"<leader>o"`) moves every default key at once. A key in `keymaps` is still a full key and wins.
+- `:LatticeHealth` warns about Lattice keys that overlap another mapping (one is a prefix of the other, so one waits `timeoutlen`), and about Lattice keys another plugin replaced after setup. Exact collisions are skipped and reported as before.
+
+### Migration
+
+To keep the old keys:
+
+```lua
+opts = {
+  root = "~/Documents/WorkNotes",
+  keymaps_prefix = "<leader>l",
+  keymaps = { add_waiting = "<leader>ld", agenda = false },
+}
+```
+
+Explicit keys you already set in `keymaps` keep working unchanged. With LazyVim's Overseer extra, Lattice skips `<leader>ot` and `<leader>ow` and keeps Overseer's; see the README for alternative keys.
+
 ## 0.3.0 — 2026-11-05 — GitHub capture inbox
 
 Implements [`specs/LATTICE_INBOX_SPEC.md`](specs/LATTICE_INBOX_SPEC.md) with its Amendment 1 (#23–#27): text captured on the phone in Drafts goes to a private GitHub repository, and Lattice files it into your notes. It is off unless `~/.config/lattice/inbox.json` exists; without that file nothing changes and Lattice makes no network access. Setup is in the README section "GitHub capture inbox".

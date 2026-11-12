@@ -1,5 +1,6 @@
 -- :checkhealth lattice (also :LatticeHealth). Runs a fresh, read-only scan.
 local config = require("lattice.config")
+local keymaps = require("lattice.keymaps")
 local markdown = require("lattice.markdown")
 local scanner = require("lattice.scanner")
 
@@ -7,6 +8,9 @@ local M = {}
 
 -- Keymaps skipped at setup because the key was already mapped.
 M.keymap_conflicts = {}
+-- Keymaps set at setup that overlap another mapping: { lhs, action, other,
+-- desc, prefix }, where `prefix` means `other` is a prefix of `lhs`.
+M.keymap_overlaps = {}
 
 --- Turns a scan result into { level, message } entries. Paths are relative
 --- to the notes root, which is reported first.
@@ -85,7 +89,50 @@ function M.report(result)
   end
 
   for _, conflict in ipairs(M.keymap_conflicts) do
-    add("warn", ("Keymap %s (%s) not set: the key was already mapped"):format(conflict.lhs, conflict.action))
+    add(
+      "warn",
+      ("Keymap %s (%s) not set: the key was already mapped; set keymaps.%s to another key or false"):format(
+        conflict.lhs,
+        conflict.action,
+        conflict.action
+      )
+    )
+  end
+  for _, overlap in ipairs(M.keymap_overlaps) do
+    local other = overlap.desc and ("%s (%s)"):format(overlap.other, overlap.desc) or overlap.other
+    if overlap.prefix then
+      add("warn", ("Keymap %s (%s) waits for 'timeoutlen': %s is mapped too, so it runs only after that delay"):format(
+        overlap.lhs,
+        overlap.action,
+        other
+      ))
+    else
+      add("warn", ("Keymap %s (%s) waits for 'timeoutlen' because %s starts with it"):format(
+        overlap.lhs,
+        overlap.action,
+        other
+      ))
+    end
+  end
+  -- A plugin that maps the same key after setup replaces Lattice's mapping
+  -- without Lattice seeing it; report it here instead.
+  local names = vim.tbl_keys(config.active_keymaps)
+  table.sort(names)
+  for _, name in ipairs(names) do
+    local lhs = config.active_keymaps[name]
+    local current = keymaps.global_mapping(lhs)
+    if not keymaps.is_lattice(current) then
+      local by = current and (current.desc or current.rhs) or nil
+      add(
+        "warn",
+        ("Keymap %s (%s) was %s after setup%s"):format(
+          lhs,
+          name,
+          current and "replaced" or "removed",
+          by and (" by %s"):format(by) or ""
+        )
+      )
+    end
   end
   return items
 end

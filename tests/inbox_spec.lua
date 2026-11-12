@@ -105,11 +105,11 @@ test("inbox config: repositories are active only for the current notes root", fu
   eq(cfg.repositories[2].root_missing, false)
 end)
 
-test("setup: inbox_sync.config sets the path; the inbox refresh key defaults to <leader>lR", function()
+test("setup: inbox_sync.config sets the path; the inbox refresh key defaults to <leader>oR", function()
   local saved = vim.deepcopy(config.options)
   config.setup({ root = "/tmp", inbox_sync = { config = "/tmp/x/inbox.json" } })
   eq(sync.config_path(), "/tmp/x/inbox.json")
-  eq(config.options.keymaps.inbox_refresh, "<leader>lR")
+  eq(config.options.keymaps.inbox_refresh, "<leader>oR")
   config.setup({ root = "/tmp" })
   eq(sync.config_path(), inbox_config.default_path())
   config.options = saved

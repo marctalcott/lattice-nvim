@@ -5,29 +5,44 @@ local M = {}
 
 M.filename = ".lattice.json"
 
+-- Default keys, as suffixes of keymaps_prefix (LATTICE_KEYBINDINGS_SPEC).
+-- Case matters: a/A, w/W, s/S, d/D are different actions.
 local DEFAULT_KEYMAPS = {
-  open = "<leader>ll",
-  add_todo = "<leader>lt",
-  add_waiting = "<leader>ld",
-  refresh = "<leader>lr",
-  next_state = "<leader>ln",
-  prev_state = "<leader>lp",
-  set_state = "<leader>ls",
-  toggle_checkbox = "<leader>lx",
-  schedule = "<leader>lS",
-  deadline = "<leader>lD",
-  priority_up = "<leader>l+",
-  priority_down = "<leader>l-",
-  refile = "<leader>lw",
-  archive = "<leader>lA",
-  inbox = "<leader>li",
-  inbox_refresh = "<leader>lR",
+  open = "l",
+  agenda = "a",
+  add_todo = "t",
+  add_waiting = "W",
+  refresh = "r",
+  next_state = "n",
+  prev_state = "p",
+  set_state = "s",
+  toggle_checkbox = "x",
+  schedule = "S",
+  deadline = "D",
+  priority_up = "+",
+  priority_down = "-",
+  refile = "w",
+  archive = "A",
+  inbox = "i",
+  inbox_refresh = "R",
 }
+
+-- <leader>o rather than <leader>l, which LazyVim maps to :Lazy.
+M.DEFAULT_PREFIX = "<leader>o"
+
+local function prefixed(prefix)
+  local keymaps = {}
+  for name, suffix in pairs(DEFAULT_KEYMAPS) do
+    keymaps[name] = prefix .. suffix
+  end
+  return keymaps
+end
 
 -- Options passed to setup(). `root` has no default: it must be set explicitly.
 M.options = {
   root = nil,
-  keymaps = vim.deepcopy(DEFAULT_KEYMAPS),
+  keymaps_prefix = M.DEFAULT_PREFIX,
+  keymaps = prefixed(M.DEFAULT_PREFIX),
 }
 
 -- Keymaps setup() actually created, by name. Keys skipped because they
@@ -71,14 +86,15 @@ function M.normalize_root(root)
   return (path:gsub("/+$", ""))
 end
 
--- Merges user keymaps over the defaults. Unknown names and values other
--- than a key string or false are dropped with one error message, so a typo
--- cannot abort setup.
-local function merge_keymaps(user)
+-- Merges user keymaps over the defaults under `prefix`. A key string in
+-- `user` is a full key, not a suffix. Unknown names and values other than a
+-- key string or false are dropped with one error message, so a typo cannot
+-- abort setup.
+local function merge_keymaps(user, prefix)
   if user == false then
     return false
   end
-  local keymaps = vim.deepcopy(DEFAULT_KEYMAPS)
+  local keymaps = prefixed(prefix)
   if user == nil then
     return keymaps
   end
@@ -107,7 +123,18 @@ end
 function M.setup(opts)
   opts = opts or {}
   M.options.root = M.normalize_root(opts.root)
-  M.options.keymaps = merge_keymaps(opts.keymaps)
+  local prefix = opts.keymaps_prefix
+  if prefix == nil then
+    prefix = M.DEFAULT_PREFIX
+  elseif type(prefix) ~= "string" or prefix == "" then
+    vim.notify(
+      ("Lattice: keymaps_prefix must be a key string, not %s; using %s"):format(vim.inspect(prefix), M.DEFAULT_PREFIX),
+      vim.log.levels.ERROR
+    )
+    prefix = M.DEFAULT_PREFIX
+  end
+  M.options.keymaps_prefix = prefix
+  M.options.keymaps = merge_keymaps(opts.keymaps, prefix)
   M.options.inbox_sync = {}
   local sync = opts.inbox_sync
   if sync ~= nil then
