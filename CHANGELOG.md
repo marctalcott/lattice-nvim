@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.4.0) — Default keys move to `<leader>o`
+## 0.4.0 — 2026-11-12 — Default keys move to `<leader>o`
 
 Implements [`specs/LATTICE_KEYBINDINGS_SPEC.md`](specs/LATTICE_KEYBINDINGS_SPEC.md) with its Amendment 1. LazyVim maps `<leader>l` to `:Lazy`, so Lattice's default prefix moves to `<leader>o`, which core LazyVim leaves free.
 
